@@ -176,7 +176,13 @@ pub fn run() -> Result<(), String> {
         Command::Tag { name, commit, a, m, d } => {
             commands::tag::execute(name.as_deref(), commit.as_deref(), a, m.as_deref(), d.as_deref())
         }
-        Command::Reset { .. } => Err("not yet implemented".into()),
-        Command::Stash { .. } => Err("not yet implemented".into()),
+        Command::Reset { commit } => commands::reset::execute(commit.as_deref()),
+        Command::Stash { action } => {
+            match action {
+                None => commands::stash::execute_stash(),
+                Some(StashAction::Pop) => commands::stash::execute_pop(),
+                Some(StashAction::List) => commands::stash::execute_list(),
+            }
+        }
     }
 }

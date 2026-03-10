@@ -1,4 +1,4 @@
-Here's what you can test for Phase 3:
+
 
 ```bash
 # Setup
@@ -7,108 +7,101 @@ VRIT=/Users/dev0/sandbox/claude/mygit/target/debug/vrit
 $VRIT init
 echo 'user.name = You' >> .vrit/config
 echo 'user.email = you@test.com' >> .vrit/config
-
-# Base commit
-echo "line one" > file.txt
-echo "only in main" > main-only.txt
+echo "v1" > file.txt
 $VRIT add .
-$VRIT commit -m "Initial"
+$VRIT commit -m "First"
+echo "v2" > file.txt
+$VRIT add file.txt
+$VRIT commit -m "Second"
 
-# 1. Branch operations
-$VRIT branch feature         # create
-$VRIT branch                 # list — main has *, feature doesn't
-$VRIT branch -d feature      # delete
-$VRIT branch                 # only main
-$VRIT branch -d main         # error: can't delete current branch
+# --- RESET ---
 
-# 2. Checkout + file switching
+# 1. Unstage changes (reset with no args)
+echo "v3" > file.txt
+$VRIT add file.txt
+$VRIT status             # file.txt staged (green)
+$VRIT reset
+$VRIT status             # file.txt unstaged (red), working tree still has "v3"
+cat file.txt             # still "v3" — working tree untouched
+
+# 2. Reset to a previous commit
+$VRIT log                # note the First commit SHA
+$VRIT reset <first-commit-sha>
+$VRIT log                # only First commit — Second is gone
+cat file.txt             # still "v3" — working tree untouched
+$VRIT status             # file.txt shows as modified (index has "v1", disk has "v3")
+
+# 3. Reset warns about unreachable commits
+# (you should have seen the warning in step 2)
+
+# --- STASH ---
+
+# 4. Stash dirty changes
+echo "dirty work" > file.txt
+cat file.txt             # "dirty work"
+$VRIT stash
+cat file.txt             # back to "v1" (HEAD content)
+$VRIT status             # clean
+
+# 5. Pop restores changes
+$VRIT stash pop
+cat file.txt             # "dirty work" is back
+
+# 6. Multiple stashes stack
+echo "change A" > file.txt
+$VRIT stash
+echo "change B" > file.txt
+$VRIT stash
+echo "change C" > file.txt
+$VRIT stash
+$VRIT stash list         # stash@{0}, stash@{1}, stash@{2}
+
+# 7. Pop is LIFO
+$VRIT stash pop
+cat file.txt             # "change C" (most recent)
+$VRIT stash list         # stash@{0}, stash@{1}
+$VRIT stash pop
+cat file.txt             # "change B"
+$VRIT stash pop
+cat file.txt             # "change A"
+$VRIT stash list         # empty (no output)
+
+# 8. Stash with staged changes
+echo "staged change" > file.txt
+$VRIT add file.txt
+$VRIT status             # staged
+$VRIT stash
+$VRIT status             # clean
+$VRIT stash pop
+cat file.txt             # "staged change" restored
+
+# 9. Error cases
+$VRIT checkout -- file.txt
+$VRIT reset
+$VRIT status             # clean
+$VRIT stash              # "no local changes to save"
+$VRIT stash pop          # "no stash entries"
+
+# --- COMBINED WORKFLOW ---
+
+# 10. Stash before merge
 $VRIT branch feature
 $VRIT checkout feature
-echo "feature work" > feature.txt
-echo "changed by feature" > file.txt
-$VRIT add .
-$VRIT commit -m "Feature changes"
+echo "feature" > feature.txt
+$VRIT add feature.txt
+$VRIT commit -m "Feature"
 $VRIT checkout main
-cat file.txt                 # should be "line one" again
-ls feature.txt               # should NOT exist
-$VRIT checkout feature
-cat file.txt                 # should be "changed by feature"
-ls feature.txt               # should exist
-
-# 3. Dirty checkout refusal
-$VRIT checkout main
-echo "uncommitted" > file.txt
-$VRIT checkout feature       # should REFUSE with clear message
-
-# Reset for merge tests
-$VRIT checkout -- file.txt   # restore from HEAD
-$VRIT status                 # clean
-
-# 4. Fast-forward merge
-$VRIT checkout main
-$VRIT merge feature          # FF — main was ancestor of feature
-$VRIT log                    # no merge commit, just feature's commits
-cat file.txt                 # "changed by feature"
-ls feature.txt               # exists now
-
-# 5. Diverging clean merge (three-way, no conflict)
-$VRIT branch side
-$VRIT checkout side
-echo "side addition" > side.txt
-$VRIT add side.txt
-$VRIT commit -m "Side work"
-$VRIT checkout main
-echo "main addition" > main-new.txt
-$VRIT add main-new.txt
-$VRIT commit -m "Main work"
-$VRIT merge side             # "Merge made by the 'recursive' strategy."
-$VRIT log                    # merge commit with "Merge: xxx yyy"
-ls side.txt main-new.txt     # both exist
-
-# 6. Merge with conflict
-$VRIT branch conflict
-$VRIT checkout conflict
-echo "conflict version" > file.txt
-$VRIT add file.txt
-$VRIT commit -m "Conflict change"
-$VRIT checkout main
-echo "main version" > file.txt
-$VRIT add file.txt
-$VRIT commit -m "Main change"
-$VRIT merge conflict         # CONFLICT message
-cat file.txt                 # should show <<<<<<< main / ======= / >>>>>>> conflict
-$VRIT status                 # "You have unmerged changes"
-
-# 7. Merge --abort
-$VRIT merge --abort
-cat file.txt                 # back to "main version"
-$VRIT status                 # clean
-
-# 8. Resolve conflict manually
-$VRIT merge conflict
-echo "resolved content" > file.txt
-$VRIT add file.txt
-$VRIT commit -m "Merge resolved"
-$VRIT log                    # merge commit with two parents
-
-# 9. Detached HEAD
-$VRIT log                    # pick a SHA from output
-$VRIT checkout <paste-sha>   # warning about detached HEAD
-$VRIT status                 # "HEAD detached at xxxxxxx"
-$VRIT checkout main          # back to normal
-
-# 10. Already up to date
-$VRIT merge main             # "Already up to date."
-
-# 11. Merge refuses dirty tree
-echo "dirty" > file.txt
-$VRIT merge conflict         # should refuse: "commit or stash before merging"
+echo "wip" > file.txt
+$VRIT stash              # save WIP
+$VRIT merge feature      # merge clean
+$VRIT stash pop           # restore WIP
+cat file.txt             # "wip"
+ls feature.txt           # exists from merge
 ```
 
 Key things to validate:
-- **File switching**: checkout actually changes files on disk, not just refs
-- **Dirty protection**: both checkout and merge refuse when tracked files are dirty
-- **Conflict markers**: `<<<<<<<`/`=======`/`>>>>>>>` have correct branch names
-- **Merge abort**: fully restores pre-merge state
-- **Conflict resolution**: `add` + `commit` after resolving creates a two-parent merge commit
-- **Log shows merge parents**: "Merge: xxx yyy" line on merge commits
+- **Reset leaves working tree alone** — only index changes
+- **Stash/pop is a perfect roundtrip** — file content restored exactly
+- **Multiple stashes are LIFO** — pop returns most recent first
+- **Stash list numbering** — `stash@{0}` is newest
+- **Error messages** are clear for clean tree / empty stack

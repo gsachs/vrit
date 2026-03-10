@@ -119,12 +119,12 @@ The following gaps were identified by SpecFlow analysis and resolved here. These
 **Commands:** `vrit reset`, `vrit stash`, `vrit stash pop`, `vrit stash list`
 
 **Tasks:**
-- [ ] `vrit reset [commit]` — default to HEAD (unstage all). Move branch pointer if commit differs. Reset index to match target commit. Leave working tree alone. Warn if no reflog means commits become unreachable
-- [ ] `vrit stash` — error if clean working tree. Capture staged + unstaged changes as a commit. Write to refs/stash (parent chain for stack). Reset index and working tree to HEAD
-- [ ] `vrit stash list` — walk parent chain from refs/stash, display entries with index
-- [ ] `vrit stash pop` — apply top stash's changes to working tree. On success, update refs/stash to parent (or delete if last). On conflict, keep stash entry (like Git)
-- [ ] Unit tests: stash commit creation, parent chain walk, reset index manipulation
-- [ ] Integration tests: stash/pop roundtrip, stash list with multiple entries, reset unstaging
+- [x] `vrit reset [commit]` — default to HEAD (unstage all). Move branch pointer if commit differs. Reset index to match target commit. Leave working tree alone. Warn if no reflog means commits become unreachable
+- [x] `vrit stash` — error if clean working tree. Capture staged + unstaged changes as a commit. Write to refs/stash (parent chain for stack). Reset index and working tree to HEAD
+- [x] `vrit stash list` — walk parent chain from refs/stash, display entries with index
+- [x] `vrit stash pop` — apply top stash's changes to working tree. On success, update refs/stash to parent (or delete if last). On conflict, keep stash entry (like Git)
+- [x] Unit tests: stash commit creation, parent chain walk, reset index manipulation
+- [x] Integration tests: stash/pop roundtrip, stash list with multiple entries, reset unstaging
 
 **Validation:** Stash dirty changes, verify clean tree, pop them back. Multiple stashes stack correctly. Reset moves HEAD and unstages.
 
