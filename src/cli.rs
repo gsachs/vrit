@@ -91,8 +91,8 @@ enum Command {
 
     /// Switch branches or restore files
     Checkout {
-        /// Branch name or commit SHA
-        target: String,
+        /// Branch name, commit SHA, or file to restore (after --)
+        target: Option<String>,
         /// Restore a file from HEAD (use: checkout -- <file>)
         #[arg(last = true)]
         file: Option<String>,
@@ -161,7 +161,17 @@ pub fn run() -> Result<(), String> {
         Command::Diff { staged } => commands::diff_cmd::execute(staged),
         Command::WriteTree => commands::write_tree::execute(),
         Command::Branch { name, d } => commands::branch::execute(name.as_deref(), d.as_deref()),
-        Command::Checkout { target, file } => commands::checkout::execute(&target, file.as_deref()),
+        Command::Checkout { target, file } => {
+            match (target, file) {
+                // checkout -- <file>
+                (None, Some(f)) => commands::checkout::execute_restore(&f),
+                (Some(t), Some(f)) if t == "--" => commands::checkout::execute_restore(&f),
+                // checkout <target>
+                (Some(t), None) => commands::checkout::execute(&t, None),
+                (Some(t), Some(f)) => commands::checkout::execute(&t, Some(f.as_str())),
+                (None, None) => Err("must specify a branch, commit SHA, or -- <file>".into()),
+            }
+        }
         Command::Merge { branch, abort } => commands::merge::execute(branch.as_deref(), abort),
         Command::Tag { .. } => Err("not yet implemented".into()),
         Command::Reset { .. } => Err("not yet implemented".into()),

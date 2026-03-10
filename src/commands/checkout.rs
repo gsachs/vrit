@@ -8,6 +8,16 @@ use crate::index::{Index, IndexEntry};
 use crate::object::Object;
 use crate::repo;
 
+/// Restore a file from HEAD (checkout -- <file>)
+pub fn execute_restore(file_path: &str) -> Result<(), String> {
+    let vrit_dir = repo::find_vrit_dir()?;
+    let repo_root = vrit_dir
+        .parent()
+        .ok_or("cannot determine repository root")?
+        .to_path_buf();
+    restore_file(&vrit_dir, &repo_root, file_path)
+}
+
 pub fn execute(target: &str, file: Option<&str>) -> Result<(), String> {
     let vrit_dir = repo::find_vrit_dir()?;
     let repo_root = vrit_dir
