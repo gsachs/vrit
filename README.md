@@ -1,8 +1,10 @@
 # vrit
 
-*वृत् — from the Sanskrit root meaning "to turn, to revolve."*
+*वृत् — from the Sanskrit root meaning "to turn, to revolve." Related to vṛtti (change/activity) and etymologically connected to the Latin vertere, the root of "version."*
 
-A learning-oriented reimplementation of Git's core in Rust. Built to deeply understand how a content-addressable filesystem and DAG-based version control system works.
+A learning-oriented reimplementation of Git's core in Rust. Built to deeply understand how a content-addressable filesystem and DAG-based version control system works by building one from scratch.
+
+Git-compatibility is a non-goal, though the object format (blob, tree, commit, tag) matches Git's — `vrit hash-object` produces identical SHAs to `git hash-object`.
 
 ## Building
 
@@ -10,24 +12,89 @@ A learning-oriented reimplementation of Git's core in Rust. Built to deeply unde
 cargo build
 ```
 
-## Usage
+## Quick Start
 
 ```sh
-# Initialize a repository
 vrit init
+echo 'user.name = Your Name' >> .vrit/config
+echo 'user.email = you@example.com' >> .vrit/config
 
-# Stage files
-vrit add <file>
-
-# Commit changes
-vrit commit -m "message"
-
-# View commit log
-vrit log
-
-# Check status
-vrit status
+echo "hello" > file.txt
+vrit add file.txt
+vrit commit -m "Initial commit"
 ```
+
+## Commands
+
+### Core
+
+| Command | Description |
+|---------|-------------|
+| `vrit init` | Create a new `.vrit` repository |
+| `vrit add <paths...>` | Stage files (supports directories, detects deletions) |
+| `vrit rm <path>` | Remove a file from the index and working tree |
+| `vrit commit -m "<msg>"` | Create a commit from staged changes |
+| `vrit status` | Show staged, modified, and untracked files |
+| `vrit log` | Show commit history (full DAG traversal) |
+| `vrit diff` | Show unstaged changes (Myers diff) |
+| `vrit diff --staged` | Show staged changes (index vs HEAD) |
+
+### Branching & Merging
+
+| Command | Description |
+|---------|-------------|
+| `vrit branch [name]` | List branches or create a new one |
+| `vrit branch -d <name>` | Delete a branch |
+| `vrit checkout <branch>` | Switch branches |
+| `vrit checkout <sha>` | Enter detached HEAD state |
+| `vrit checkout -- <file>` | Restore a file from HEAD |
+| `vrit merge <branch>` | Merge (fast-forward or three-way) |
+| `vrit merge --abort` | Abort a conflicted merge |
+
+### Tags
+
+| Command | Description |
+|---------|-------------|
+| `vrit tag` | List all tags |
+| `vrit tag <name>` | Create a lightweight tag |
+| `vrit tag -a <name> -m "<msg>"` | Create an annotated tag |
+| `vrit tag -d <name>` | Delete a tag |
+
+### Reset & Stash
+
+| Command | Description |
+|---------|-------------|
+| `vrit reset` | Unstage all changes |
+| `vrit reset <commit>` | Move HEAD to a commit, reset index |
+| `vrit stash` | Save dirty working tree to stash stack |
+| `vrit stash pop` | Apply and remove the top stash entry |
+| `vrit stash list` | List stash entries |
+
+### Plumbing
+
+| Command | Description |
+|---------|-------------|
+| `vrit hash-object [-w] <file>` | Compute blob SHA (optionally write to store) |
+| `vrit cat-file -p/-t/-s <sha>` | Display object content, type, or size |
+| `vrit ls-tree <sha>` | List tree entries |
+| `vrit write-tree` | Write current index as a tree object |
+
+## Key Implementation Details
+
+- **Object store**: zlib-compressed loose objects at `.vrit/objects/<2>/<38>`, same format as Git
+- **Diff engine**: Myers diff algorithm implemented from scratch
+- **Merge**: three-way merge with conflict markers (`<<<<<<<`/`=======`/`>>>>>>>`)
+- **Index**: custom binary format with version byte, sorted entries
+- **Refs**: atomic writes via temp file + rename
+- **Ignore**: `.vritignore` with glob patterns (`*`, `?`, `**`, trailing `/`)
+- **Binary detection**: null-byte scan of first 8KB
+
+## Non-Goals
+
+- No remote operations (clone, fetch, push, pull)
+- No interactive rebase
+- No submodules or hooks
+- No Windows support (POSIX-only)
 
 ## License
 

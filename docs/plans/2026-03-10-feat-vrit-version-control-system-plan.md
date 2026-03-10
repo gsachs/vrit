@@ -1,7 +1,7 @@
 ---
 title: "feat: Build vrit version control system"
 type: feat
-status: active
+status: completed
 date: 2026-03-10
 ---
 
