@@ -80,22 +80,22 @@ The following gaps were identified by SpecFlow analysis and resolved here. These
 **Commands:** `vrit branch`, `vrit checkout`, `vrit merge`
 
 **Tasks:**
-- [ ] `vrit branch [name]` — list branches or create new (write ref file)
-- [ ] `vrit branch -d <name>` — delete branch ref. Refuse if it's the current branch
-- [ ] `vrit checkout <branch>` — update HEAD (to `ref: refs/heads/<branch>`), update index and working tree to match target commit. Refuse if dirty tracked files would be overwritten
-- [ ] `vrit checkout -- <file>` — restore file from HEAD, update index
-- [ ] Detached HEAD: `vrit checkout <sha>` writes raw SHA to HEAD, prints warning
-- [ ] Merge base finder: BFS on parent links to find lowest common ancestor
-- [ ] Fast-forward merge: detect ancestor relationship, move branch pointer, done
-- [ ] Three-way merge engine: diff base vs each tip, combine changes per-file
-- [ ] Handle: file changed one side, both sides same, both sides different (conflict), file added both sides, file deleted one side + modified other
-- [ ] Conflict markers: `<<<<<<<`/`=======`/`>>>>>>>` with branch names
-- [ ] Merge state: write `.vrit/MERGE_HEAD` and `.vrit/MERGE_MSG` on conflict
-- [ ] Auto-commit on clean merge (use generated message, bypass `-m` requirement)
-- [ ] `vrit merge --abort` — delete state files, reset index and working tree to HEAD
-- [ ] `vrit status` during merge — show "merging" state and conflicted files
-- [ ] Unit tests: merge base finding, three-way merge cases (clean, conflict, ff), tree-level operations
-- [ ] Integration tests: diverging branches, merge with/without conflicts, merge --abort
+- [x] `vrit branch [name]` — list branches or create new (write ref file)
+- [x] `vrit branch -d <name>` — delete branch ref. Refuse if it's the current branch
+- [x] `vrit checkout <branch>` — update HEAD (to `ref: refs/heads/<branch>`), update index and working tree to match target commit. Refuse if dirty tracked files would be overwritten
+- [x] `vrit checkout -- <file>` — restore file from HEAD, update index
+- [x] Detached HEAD: `vrit checkout <sha>` writes raw SHA to HEAD, prints warning
+- [x] Merge base finder: BFS on parent links to find lowest common ancestor
+- [x] Fast-forward merge: detect ancestor relationship, move branch pointer, done
+- [x] Three-way merge engine: diff base vs each tip, combine changes per-file
+- [x] Handle: file changed one side, both sides same, both sides different (conflict), file added both sides, file deleted one side + modified other
+- [x] Conflict markers: `<<<<<<<`/`=======`/`>>>>>>>` with branch names
+- [x] Merge state: write `.vrit/MERGE_HEAD` and `.vrit/MERGE_MSG` on conflict
+- [x] Auto-commit on clean merge (use generated message, bypass `-m` requirement)
+- [x] `vrit merge --abort` — delete state files, reset index and working tree to HEAD
+- [x] `vrit status` during merge — show "merging" state and conflicted files
+- [x] Unit tests: merge base finding, three-way merge cases (clean, conflict, ff), tree-level operations
+- [x] Integration tests: diverging branches, merge with/without conflicts, merge --abort
 
 **Validation:** Create branch, make diverging commits, merge cleanly. Create conflicts, resolve with add+commit. Fast-forward merge works. Abort restores clean state.
 
