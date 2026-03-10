@@ -2,7 +2,7 @@
 
 *वृत् — from the Sanskrit root meaning "to turn, to revolve." Related to vṛtti (change/activity) and etymologically connected to the Latin vertere, the root of "version."*
 
-A learning-oriented reimplementation of Git's core in Rust. Built to deeply understand how a content-addressable filesystem and DAG-based version control system works by building one from scratch.
+A learning-oriented reimplementation of Git's core in Rust (~3,800 lines, 25 tests). Built to deeply understand how a content-addressable filesystem and DAG-based version control system works by building one from scratch.
 
 Git-compatibility is a non-goal, though the object format (blob, tree, commit, tag) matches Git's — `vrit hash-object` produces identical SHAs to `git hash-object`.
 
@@ -79,19 +79,46 @@ vrit commit -m "Initial commit"
 | `vrit ls-tree <sha>` | List tree entries |
 | `vrit write-tree` | Write current index as a tree object |
 
+## Architecture
+
+```
+Working Tree ←→ Index (.vrit/index) ←→ Object Store (.vrit/objects/)
+                                              ↑
+                                         Refs (.vrit/refs/)
+```
+
+All objects are immutable once written. The only mutable state is refs (branch/tag pointers) and the index, both protected by atomic rename. This means zero concurrency primitives — no mutexes, locks, or async — while remaining safe for concurrent reads.
+
 ## Key Implementation Details
 
-- **Object store**: zlib-compressed loose objects at `.vrit/objects/<2>/<38>`, same format as Git
-- **Diff engine**: Myers diff algorithm implemented from scratch
-- **Merge**: three-way merge with conflict markers (`<<<<<<<`/`=======`/`>>>>>>>`)
-- **Index**: custom binary format with version byte, sorted entries
+- **Object store**: zlib-compressed loose objects at `.vrit/objects/<2>/<38>`, self-describing format (`type size\0body`)
+- **Diff engine**: Myers diff algorithm (edit graph shortest-path) implemented from scratch
+- **Merge**: three-way merge using LCA (BFS) as common ancestor, with conflict markers
+- **Index**: binary format with version byte, big-endian fields, sorted entries, allocation bomb guard
 - **Refs**: atomic writes via temp file + rename
 - **Ignore**: `.vritignore` with glob patterns (`*`, `?`, `**`, trailing `/`)
 - **Binary detection**: null-byte scan of first 8KB
+- **Security**: path traversal defense (parent-dir canonicalization), decompression bomb limits, tree entry name validation, fail-closed error handling
+
+## Project Structure
+
+```
+src/
+├── main.rs          # Entry point
+├── cli.rs           # Argument parsing and command dispatch
+├── object.rs        # Content-addressable object model (blob, tree, commit, tag)
+├── index.rs         # Binary staging area (sorted entries, atomic save)
+├── diff.rs          # Myers diff algorithm
+├── repo.rs          # Shared plumbing (HEAD resolution, tree traversal, ref ops)
+├── config.rs        # INI-style config parser
+├── ignore.rs        # .vritignore glob matching
+└── commands/        # Porcelain commands (one file per command)
+```
 
 ## Non-Goals
 
 - No remote operations (clone, fetch, push, pull)
+- No packfiles (loose objects only)
 - No interactive rebase
 - No submodules or hooks
 - No Windows support (POSIX-only)
