@@ -12,4 +12,5 @@ pub mod ls_tree;
 pub mod merge;
 pub mod rm;
 pub mod status;
+pub mod tag;
 pub mod write_tree;

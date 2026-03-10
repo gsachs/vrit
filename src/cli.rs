@@ -173,7 +173,9 @@ pub fn run() -> Result<(), String> {
             }
         }
         Command::Merge { branch, abort } => commands::merge::execute(branch.as_deref(), abort),
-        Command::Tag { .. } => Err("not yet implemented".into()),
+        Command::Tag { name, commit, a, m, d } => {
+            commands::tag::execute(name.as_deref(), commit.as_deref(), a, m.as_deref(), d.as_deref())
+        }
         Command::Reset { .. } => Err("not yet implemented".into()),
         Command::Stash { .. } => Err("not yet implemented".into()),
     }

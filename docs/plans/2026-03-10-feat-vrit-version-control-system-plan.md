@@ -104,13 +104,13 @@ The following gaps were identified by SpecFlow analysis and resolved here. These
 **Commands:** `vrit tag`
 
 **Tasks:**
-- [ ] `vrit tag <name> [commit]` — write lightweight ref to `.vrit/refs/tags/<name>`
-- [ ] `vrit tag -a <name> -m "<msg>" [commit]` — create tag object, write ref pointing to tag object SHA
-- [ ] `vrit tag` (no args) — list all tags alphabetically
-- [ ] `vrit tag -d <name>` — delete tag ref (and orphan tag object if annotated — gc later)
-- [ ] `vrit cat-file -p` support for tag objects
-- [ ] Unit tests: tag object serialization, ref creation
-- [ ] Integration test: create both types, list, delete, verify cat-file works on annotated
+- [x] `vrit tag <name> [commit]` — write lightweight ref to `.vrit/refs/tags/<name>`
+- [x] `vrit tag -a <name> -m "<msg>" [commit]` — create tag object, write ref pointing to tag object SHA
+- [x] `vrit tag` (no args) — list all tags alphabetically
+- [x] `vrit tag -d <name>` — delete tag ref (and orphan tag object if annotated — gc later)
+- [x] `vrit cat-file -p` support for tag objects
+- [x] Unit tests: tag object serialization, ref creation
+- [x] Integration test: create both types, list, delete, verify cat-file works on annotated
 
 **Validation:** Create lightweight and annotated tags, list them, delete them. `cat-file -p` on annotated tag shows tagger/message.
 
