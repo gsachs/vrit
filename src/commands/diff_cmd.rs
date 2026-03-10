@@ -1,8 +1,7 @@
 // Shows differences between working tree and index, or index and HEAD
+use std::collections::HashMap;
 use std::fs;
 
-use crate::commands::commit::resolve_head;
-use crate::commands::status::flatten_tree;
 use crate::diff::{self, is_binary};
 use crate::index::Index;
 use crate::object::Object;
@@ -29,13 +28,15 @@ fn diff_staged(
     index: &Index,
     colored: bool,
 ) -> Result<(), String> {
-    let head_entries = head_tree_map(vrit_dir)?;
+    let head_entries: HashMap<String, String> = repo::head_tree_entries(vrit_dir)?
+        .into_iter()
+        .map(|(p, s, _)| (p, s))
+        .collect();
 
     for entry in &index.entries {
         let old_bytes = head_entries
-            .iter()
-            .find(|(p, _)| p == &entry.path)
-            .and_then(|(_, sha)| read_blob_bytes(vrit_dir, sha));
+            .get(&entry.path)
+            .and_then(|sha| read_blob_bytes(vrit_dir, sha));
 
         let new_bytes = read_blob_bytes(vrit_dir, &entry.sha);
 
@@ -68,7 +69,8 @@ fn diff_unstaged(
             continue;
         }
 
-        let working_content = fs::read(&file_path).unwrap_or_default();
+        let working_content = fs::read(&file_path)
+            .map_err(|e| format!("cannot read '{}': {e}", entry.path))?;
         let working_blob = Object::Blob(working_content.clone());
 
         if working_blob.sha() != entry.sha {
@@ -112,22 +114,6 @@ fn show_diff_bytes(path: &str, old: Option<&[u8]>, new: Option<&[u8]>, colored: 
     let output = diff::format_unified(path, path, &edits, colored);
     if !output.is_empty() {
         print!("{output}");
-    }
-}
-
-fn head_tree_map(
-    vrit_dir: &std::path::Path,
-) -> Result<Vec<(String, String)>, String> {
-    let head_sha = resolve_head(vrit_dir)?;
-    match head_sha {
-        Some(sha) => {
-            let obj = Object::read_from_store(vrit_dir, &sha)?;
-            match obj {
-                Object::Commit(cd) => flatten_tree(vrit_dir, &cd.tree, ""),
-                _ => Err("HEAD is not a commit".into()),
-            }
-        }
-        None => Ok(Vec::new()),
     }
 }
 

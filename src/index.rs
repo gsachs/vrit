@@ -65,16 +65,6 @@ impl Index {
         }
     }
 
-    /// Remove all entries under a directory prefix.
-    pub fn remove_dir(&mut self, dir: &str) {
-        let prefix = if dir.ends_with('/') {
-            dir.to_string()
-        } else {
-            format!("{dir}/")
-        };
-        self.entries.retain(|e| !e.path.starts_with(&prefix));
-    }
-
     pub fn get(&self, path: &str) -> Option<&IndexEntry> {
         self.entries
             .binary_search_by(|e| e.path.cmp(&path.to_string()))
@@ -92,7 +82,8 @@ impl Index {
         for entry in &self.entries {
             buf.extend_from_slice(&entry.mode.to_be_bytes());
 
-            let sha_bytes = crate::object::hex_to_bytes(&entry.sha);
+            let sha_bytes = crate::object::hex_to_bytes(&entry.sha)
+                .expect("index entry SHA should be valid hex");
             buf.extend_from_slice(&sha_bytes);
 
             let path_bytes = entry.path.as_bytes();
@@ -117,6 +108,14 @@ impl Index {
             .read_exact(&mut count_buf)
             .map_err(|_| "truncated index header")?;
         let count = u32::from_be_bytes(count_buf) as usize;
+        // Minimum entry size: 4 (mode) + 20 (sha) + 2 (path_len) + 1 (min path) = 27 bytes
+        let min_entry_size = 27;
+        let remaining = data.len().saturating_sub(5); // subtract version + count header
+        if count > remaining / min_entry_size {
+            return Err(format!(
+                "index claims {count} entries but data is too small"
+            ));
+        }
 
         let mut entries = Vec::with_capacity(count);
         for _ in 0..count {

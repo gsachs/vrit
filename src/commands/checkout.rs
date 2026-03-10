@@ -1,9 +1,8 @@
 // Switches branches or restores files from HEAD
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use crate::commands::commit::resolve_head;
-use crate::commands::status::flatten_tree;
 use crate::index::{Index, IndexEntry};
 use crate::object::Object;
 use crate::repo;
@@ -45,6 +44,7 @@ fn checkout_branch(
     repo_root: &Path,
     branch: &str,
 ) -> Result<(), String> {
+    repo::validate_ref_name(branch)?;
     let ref_path = vrit_dir.join("refs/heads").join(branch);
     let target_sha = fs::read_to_string(&ref_path)
         .map_err(|e| format!("cannot read branch ref: {e}"))?
@@ -107,17 +107,21 @@ fn switch_to_commit(
     target_sha: &str,
 ) -> Result<(), String> {
     let index = Index::load(vrit_dir)?;
+    let target_entries = repo::commit_tree_entries(vrit_dir, target_sha)?;
+    let target_map: HashMap<String, (String, u32)> = target_entries
+        .into_iter()
+        .map(|(p, s, m)| (p, (s, m)))
+        .collect();
 
     // Check for dirty tracked files that would be overwritten
-    check_dirty_files(vrit_dir, repo_root, &index, target_sha)?;
+    check_dirty_files(repo_root, &index, &target_map)?;
 
-    // Get current and target tree entries
-    let current_entries = current_tree_entries(vrit_dir)?;
-    let target_entries = target_tree_entries(vrit_dir, target_sha)?;
+    // Get current tree entries
+    let current_entries = repo::head_tree_entries(vrit_dir)?;
 
     // Remove files that are in current tree but not in target
-    for (path, _) in &current_entries {
-        if !target_entries.iter().any(|(p, _)| p == path) {
+    for (path, _, _) in &current_entries {
+        if !target_map.contains_key(path) {
             let file_path = repo_root.join(path);
             if file_path.exists() {
                 let _ = fs::remove_file(&file_path);
@@ -129,19 +133,10 @@ fn switch_to_commit(
 
     // Write files from target tree
     let mut new_index = Index::new();
-    for (path, sha) in &target_entries {
-        let obj = Object::read_from_store(vrit_dir, sha)?;
-        if let Object::Blob(content) = obj {
-            let file_path = repo_root.join(path);
-            if let Some(parent) = file_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("cannot create directory: {e}"))?;
-            }
-            fs::write(&file_path, &content)
-                .map_err(|e| format!("cannot write '{path}': {e}"))?;
-        }
+    for (path, (sha, mode)) in &target_map {
+        repo::write_blob_to_working_tree(vrit_dir, repo_root, path, sha, *mode)?;
         new_index.add(IndexEntry {
-            mode: 0o100644,
+            mode: *mode,
             sha: sha.clone(),
             path: path.clone(),
         });
@@ -152,13 +147,10 @@ fn switch_to_commit(
 }
 
 fn check_dirty_files(
-    vrit_dir: &Path,
     repo_root: &Path,
     index: &Index,
-    target_sha: &str,
+    target_entries: &HashMap<String, (String, u32)>,
 ) -> Result<(), String> {
-    let target_entries = target_tree_entries(vrit_dir, target_sha)?;
-
     for entry in &index.entries {
         let file_path = repo_root.join(&entry.path);
         if !file_path.exists() {
@@ -166,14 +158,14 @@ fn check_dirty_files(
         }
 
         // Check if file has unstaged changes
-        let content = fs::read(&file_path).unwrap_or_default();
+        let content = fs::read(&file_path)
+            .map_err(|e| format!("cannot read '{}': {e}", entry.path))?;
         let blob = Object::Blob(content);
         if blob.sha() != entry.sha {
             // File is dirty — check if checkout would overwrite it
             let target_sha_for_path = target_entries
-                .iter()
-                .find(|(p, _)| p == &entry.path)
-                .map(|(_, s)| s.as_str());
+                .get(&entry.path)
+                .map(|(s, _)| s.as_str());
             if target_sha_for_path != Some(&entry.sha) {
                 return Err(format!(
                     "Your local changes to '{}' would be overwritten by checkout.\n\
@@ -191,51 +183,30 @@ fn restore_file(
     repo_root: &Path,
     file_path: &str,
 ) -> Result<(), String> {
-    let head_sha = resolve_head(vrit_dir)?
+    let head_sha = repo::resolve_head(vrit_dir)?
         .ok_or("no commits yet")?;
-    let entries = target_tree_entries(vrit_dir, &head_sha)?;
+    let entries: HashMap<String, (String, u32)> = repo::commit_tree_entries(vrit_dir, &head_sha)?
+        .into_iter()
+        .map(|(p, s, m)| (p, (s, m)))
+        .collect();
 
-    let (_, sha) = entries
-        .iter()
-        .find(|(p, _)| p == file_path)
+    let (sha, mode) = entries
+        .get(file_path)
         .ok_or(format!("pathspec '{file_path}' did not match any file in HEAD"))?;
 
-    let obj = Object::read_from_store(vrit_dir, sha)?;
-    if let Object::Blob(content) = obj {
-        let path = repo_root.join(file_path);
-        fs::write(&path, &content)
-            .map_err(|e| format!("cannot write '{file_path}': {e}"))?;
+    repo::write_blob_to_working_tree(vrit_dir, repo_root, file_path, sha, *mode)?;
 
-        // Update index
-        let mut index = Index::load(vrit_dir)?;
-        index.add(IndexEntry {
-            mode: 0o100644,
-            sha: sha.clone(),
-            path: file_path.to_string(),
-        });
-        index.save(vrit_dir)?;
+    // Update index
+    let mut index = Index::load(vrit_dir)?;
+    index.add(IndexEntry {
+        mode: *mode,
+        sha: sha.clone(),
+        path: file_path.to_string(),
+    });
+    index.save(vrit_dir)?;
 
-        println!("Updated '{file_path}' from HEAD");
-    }
+    println!("Updated '{file_path}' from HEAD");
     Ok(())
-}
-
-fn current_tree_entries(vrit_dir: &Path) -> Result<Vec<(String, String)>, String> {
-    match resolve_head(vrit_dir)? {
-        Some(sha) => target_tree_entries(vrit_dir, &sha),
-        None => Ok(Vec::new()),
-    }
-}
-
-fn target_tree_entries(
-    vrit_dir: &Path,
-    commit_sha: &str,
-) -> Result<Vec<(String, String)>, String> {
-    let obj = Object::read_from_store(vrit_dir, commit_sha)?;
-    match obj {
-        Object::Commit(cd) => flatten_tree(vrit_dir, &cd.tree, ""),
-        _ => Err(format!("{commit_sha} is not a commit")),
-    }
 }
 
 fn clean_empty_parents(path: &Path, stop_at: &Path) {

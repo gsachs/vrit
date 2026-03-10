@@ -21,8 +21,6 @@ pub fn execute() -> Result<(), String> {
     let dirs = [
         ".vrit",
         ".vrit/objects",
-        ".vrit/objects/info",
-        ".vrit/objects/pack",
         ".vrit/refs",
         ".vrit/refs/heads",
         ".vrit/refs/tags",

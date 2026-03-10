@@ -1,9 +1,8 @@
 // Saves and restores uncommitted changes via a stash stack
+use std::collections::HashMap;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::commands::commit::resolve_head;
-use crate::commands::status::flatten_tree;
 use crate::commands::write_tree::write_tree_from_index;
 use crate::config::Config;
 use crate::index::{Index, IndexEntry};
@@ -17,8 +16,14 @@ pub fn execute_stash() -> Result<(), String> {
         .ok_or("cannot determine repository root")?
         .to_path_buf();
 
-    let head_sha = resolve_head(&vrit_dir)?
+    let head_sha = repo::resolve_head(&vrit_dir)?
         .ok_or("no commits yet — nothing to stash against")?;
+
+    let head_entries_vec = repo::head_tree_entries(&vrit_dir)?;
+    let head_entry_map: HashMap<String, String> = head_entries_vec
+        .iter()
+        .map(|(p, s, _)| (p.clone(), s.clone()))
+        .collect();
 
     // Check if working tree is dirty
     let index = Index::load(&vrit_dir)?;
@@ -30,7 +35,8 @@ pub fn execute_stash() -> Result<(), String> {
             has_changes = true;
             break;
         }
-        let content = fs::read(&file_path).unwrap_or_default();
+        let content = fs::read(&file_path)
+            .map_err(|e| format!("cannot read '{}': {e}", entry.path))?;
         let blob = Object::Blob(content);
         if blob.sha() != entry.sha {
             has_changes = true;
@@ -40,15 +46,11 @@ pub fn execute_stash() -> Result<(), String> {
 
     // Also check if index differs from HEAD
     if !has_changes {
-        let head_entries = head_tree_entries(&vrit_dir)?;
-        if index.entries.len() != head_entries.len() {
+        if index.entries.len() != head_entry_map.len() {
             has_changes = true;
         } else {
             for entry in &index.entries {
-                let head_sha = head_entries
-                    .iter()
-                    .find(|(p, _)| p == &entry.path)
-                    .map(|(_, s)| s.as_str());
+                let head_sha = head_entry_map.get(&entry.path).map(|s| s.as_str());
                 if head_sha != Some(&entry.sha) {
                     has_changes = true;
                     break;
@@ -66,7 +68,8 @@ pub fn execute_stash() -> Result<(), String> {
     for entry in &index.entries {
         let file_path = repo_root.join(&entry.path);
         if file_path.exists() {
-            let content = fs::read(&file_path).unwrap_or_default();
+            let content = fs::read(&file_path)
+                .map_err(|e| format!("cannot read '{}': {e}", entry.path))?;
             let blob = Object::Blob(content);
             let sha = blob.write_to_store(&vrit_dir)?;
             stash_index.add(IndexEntry {
@@ -114,28 +117,19 @@ pub fn execute_stash() -> Result<(), String> {
         .map_err(|e| format!("cannot write stash ref: {e}"))?;
 
     // Reset working tree and index to HEAD
-    let head_entries = head_tree_entries(&vrit_dir)?;
     let mut new_index = Index::new();
-    for (path, sha) in &head_entries {
-        let obj = Object::read_from_store(&vrit_dir, sha)?;
-        if let Object::Blob(content) = obj {
-            let file_path = repo_root.join(path);
-            if let Some(parent) = file_path.parent() {
-                fs::create_dir_all(parent).ok();
-            }
-            fs::write(&file_path, &content)
-                .map_err(|e| format!("cannot write '{path}': {e}"))?;
-        }
+    for (path, sha, mode) in &head_entries_vec {
+        repo::write_blob_to_working_tree(&vrit_dir, &repo_root, path, sha, *mode)?;
         new_index.add(IndexEntry {
-            mode: 0o100644,
-            sha: sha.clone(),
-            path: path.clone(),
+            mode: *mode,
+            sha: sha.to_string(),
+            path: path.to_string(),
         });
     }
 
     // Remove files tracked in stash but not in HEAD
     for entry in &stash_index.entries {
-        if !head_entries.iter().any(|(p, _)| p == &entry.path) {
+        if !head_entry_map.contains_key(&entry.path) {
             let file_path = repo_root.join(&entry.path);
             let _ = fs::remove_file(&file_path);
         }
@@ -171,23 +165,15 @@ pub fn execute_pop() -> Result<(), String> {
     };
 
     // Restore stashed files to working tree
-    let stash_entries = flatten_tree(&vrit_dir, &cd.tree, "")?;
+    let stash_entries = repo::flatten_tree(&vrit_dir, &cd.tree, "")?;
     let mut index = Index::load(&vrit_dir)?;
 
-    for (path, sha) in &stash_entries {
-        let obj = Object::read_from_store(&vrit_dir, sha)?;
-        if let Object::Blob(content) = obj {
-            let file_path = repo_root.join(path);
-            if let Some(parent) = file_path.parent() {
-                fs::create_dir_all(parent).ok();
-            }
-            fs::write(&file_path, &content)
-                .map_err(|e| format!("cannot write '{path}': {e}"))?;
-        }
+    for (path, sha, mode) in &stash_entries {
+        repo::write_blob_to_working_tree(&vrit_dir, &repo_root, path, sha, *mode)?;
         index.add(IndexEntry {
-            mode: 0o100644,
-            sha: sha.clone(),
-            path: path.clone(),
+            mode: *mode,
+            sha: sha.to_string(),
+            path: path.to_string(),
         });
     }
     index.save(&vrit_dir)?;
@@ -239,16 +225,4 @@ pub fn execute_list() -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn head_tree_entries(
-    vrit_dir: &std::path::Path,
-) -> Result<Vec<(String, String)>, String> {
-    let head_sha = resolve_head(vrit_dir)?
-        .ok_or("no HEAD commit")?;
-    let obj = Object::read_from_store(vrit_dir, &head_sha)?;
-    match obj {
-        Object::Commit(cd) => flatten_tree(vrit_dir, &cd.tree, ""),
-        _ => Err("HEAD is not a commit".into()),
-    }
 }

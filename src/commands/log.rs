@@ -2,14 +2,13 @@
 use colored::Colorize;
 use std::collections::{HashSet, VecDeque};
 
-use crate::commands::commit::resolve_head;
 use crate::object::Object;
 use crate::repo;
 
 pub fn execute() -> Result<(), String> {
     let vrit_dir = repo::find_vrit_dir()?;
 
-    let head_sha = resolve_head(&vrit_dir)?
+    let head_sha = repo::resolve_head(&vrit_dir)?
         .ok_or("no commits yet")?;
 
     // BFS with topological awareness — process a commit only after

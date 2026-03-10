@@ -1,7 +1,6 @@
 // Lists, creates, or deletes branches
 use std::fs;
 
-use crate::commands::commit::resolve_head;
 use crate::repo;
 
 pub fn execute(name: Option<&str>, delete: Option<&str>) -> Result<(), String> {
@@ -23,10 +22,10 @@ fn list_branches(vrit_dir: &std::path::Path) -> Result<(), String> {
         return Ok(());
     }
 
-    let current = current_branch(vrit_dir);
+    let current = repo::current_branch(vrit_dir);
 
     let mut branches: Vec<String> = Vec::new();
-    collect_branches(&heads_dir, "", &mut branches)?;
+    repo::collect_refs(&heads_dir, "", &mut branches)?;
     branches.sort();
 
     for branch in &branches {
@@ -39,40 +38,14 @@ fn list_branches(vrit_dir: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-fn collect_branches(
-    dir: &std::path::Path,
-    prefix: &str,
-    branches: &mut Vec<String>,
-) -> Result<(), String> {
-    let entries = fs::read_dir(dir)
-        .map_err(|e| format!("cannot read refs/heads: {e}"))?;
-
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("directory entry error: {e}"))?;
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let full_name = if prefix.is_empty() {
-            name
-        } else {
-            format!("{prefix}/{name}")
-        };
-
-        if path.is_dir() {
-            collect_branches(&path, &full_name, branches)?;
-        } else {
-            branches.push(full_name);
-        }
-    }
-    Ok(())
-}
-
 fn create_branch(vrit_dir: &std::path::Path, name: &str) -> Result<(), String> {
+    repo::validate_ref_name(name)?;
     let ref_path = vrit_dir.join("refs/heads").join(name);
     if ref_path.exists() {
         return Err(format!("branch '{name}' already exists"));
     }
 
-    let head_sha = resolve_head(vrit_dir)?
+    let head_sha = repo::resolve_head(vrit_dir)?
         .ok_or("cannot create branch: no commits yet")?;
 
     if let Some(parent) = ref_path.parent() {
@@ -87,7 +60,8 @@ fn create_branch(vrit_dir: &std::path::Path, name: &str) -> Result<(), String> {
 }
 
 fn delete_branch(vrit_dir: &std::path::Path, name: &str) -> Result<(), String> {
-    let current = current_branch(vrit_dir);
+    repo::validate_ref_name(name)?;
+    let current = repo::current_branch(vrit_dir);
     if current.as_deref() == Some(name) {
         return Err(format!("cannot delete branch '{name}': it is the current branch"));
     }
@@ -102,10 +76,4 @@ fn delete_branch(vrit_dir: &std::path::Path, name: &str) -> Result<(), String> {
 
     println!("Deleted branch {name}");
     Ok(())
-}
-
-pub fn current_branch(vrit_dir: &std::path::Path) -> Option<String> {
-    let head = fs::read_to_string(vrit_dir.join("HEAD")).ok()?;
-    let head = head.trim();
-    head.strip_prefix("ref: refs/heads/").map(|s| s.to_string())
 }

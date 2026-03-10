@@ -18,6 +18,20 @@ pub fn myers_diff(old: &[&str], new: &[&str]) -> Vec<Edit> {
     }
 
     let max = n + m;
+
+    // Bail out when edit distance would exhaust memory from frontier vector cloning
+    const MAX_EDIT_DISTANCE: usize = 10_000;
+    if max > MAX_EDIT_DISTANCE {
+        let mut edits = Vec::with_capacity(n + m);
+        for line in old {
+            edits.push(Edit::Delete(line.to_string()));
+        }
+        for line in new {
+            edits.push(Edit::Insert(line.to_string()));
+        }
+        return edits;
+    }
+
     // v[k] stores the furthest reaching x on diagonal k
     // Diagonal k = x - y, stored at index k + max
     let mut v = vec![0usize; 2 * max + 1];

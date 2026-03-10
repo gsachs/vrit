@@ -81,7 +81,13 @@ impl Object {
 
     /// Write the object to the object store (zlib-compressed).
     pub fn write_to_store(&self, vrit_dir: &Path) -> Result<String, String> {
-        let sha = self.sha();
+        let data = self.serialize();
+
+        let mut hasher = Sha1::new();
+        hasher.update(&data);
+        let sha = format!("{:x}", hasher.finalize());
+
+        validate_sha(&sha)?;
         let dir = vrit_dir.join("objects").join(&sha[..2]);
         let file = dir.join(&sha[2..]);
 
@@ -92,7 +98,6 @@ impl Object {
         fs::create_dir_all(&dir)
             .map_err(|e| format!("failed to create object directory: {e}"))?;
 
-        let data = self.serialize();
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         encoder
             .write_all(&data)
@@ -113,18 +118,21 @@ impl Object {
 
     /// Read an object from the store by its SHA.
     pub fn read_from_store(vrit_dir: &Path, sha: &str) -> Result<Object, String> {
-        if sha.len() < 4 {
-            return Err("SHA too short".into());
-        }
+        validate_sha(sha)?;
         let path = vrit_dir.join("objects").join(&sha[..2]).join(&sha[2..]);
         let compressed = fs::read(&path)
             .map_err(|_| format!("object not found: {sha}"))?;
 
-        let mut decoder = ZlibDecoder::new(&compressed[..]);
+        const MAX_OBJECT_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+        let decoder = ZlibDecoder::new(&compressed[..]);
         let mut data = Vec::new();
         decoder
+            .take(MAX_OBJECT_SIZE)
             .read_to_end(&mut data)
             .map_err(|e| format!("zlib decompress failed: {e}"))?;
+        if data.len() as u64 >= MAX_OBJECT_SIZE {
+            return Err("object exceeds maximum size (100 MB)".into());
+        }
 
         parse_object(&data)
     }
@@ -172,7 +180,8 @@ fn serialize_tree(entries: &[TreeEntry]) -> Vec<u8> {
         buf.push(b' ');
         buf.extend_from_slice(entry.name.as_bytes());
         buf.push(0);
-        let sha_bytes = hex_to_bytes(&entry.sha);
+        let sha_bytes = hex_to_bytes(&entry.sha)
+            .expect("tree entry SHA should be valid hex");
         buf.extend_from_slice(&sha_bytes);
     }
     buf
@@ -253,6 +262,10 @@ fn parse_tree(data: &[u8]) -> Result<Object, String> {
             .map_err(|_| "invalid name in tree entry")?
             .to_string();
 
+        if name.contains("..") || name.starts_with('/') || name.contains('\0') {
+            return Err(format!("invalid tree entry name: {name}"));
+        }
+
         if null_pos + 1 + 20 > data.len() {
             return Err("tree entry truncated".into());
         }
@@ -332,15 +345,33 @@ fn parse_tag(data: &[u8]) -> Result<Object, String> {
     }))
 }
 
-pub fn hex_to_bytes(hex: &str) -> Vec<u8> {
+fn validate_sha(sha: &str) -> Result<(), String> {
+    if sha.len() != 40 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("invalid SHA: {sha}"));
+    }
+    Ok(())
+}
+
+pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
+    if hex.len() % 2 != 0 {
+        return Err(format!("hex string has odd length: {}", hex.len()));
+    }
     (0..hex.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0))
+        .map(|i| {
+            u8::from_str_radix(&hex[i..i + 2], 16)
+                .map_err(|_| format!("invalid hex byte at position {i}: {}", &hex[i..i + 2]))
+        })
         .collect()
 }
 
 pub fn bytes_to_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use std::fmt::Write;
+        write!(s, "{b:02x}").unwrap();
+    }
+    s
 }
 
 #[cfg(test)]
@@ -414,7 +445,7 @@ mod tests {
     #[test]
     fn hex_bytes_roundtrip() {
         let hex = "95d09f2b10159347eece71399a7e2e907ea3df4f";
-        let bytes = hex_to_bytes(hex);
+        let bytes = hex_to_bytes(hex).unwrap();
         assert_eq!(bytes.len(), 20);
         assert_eq!(bytes_to_hex(&bytes), hex);
     }

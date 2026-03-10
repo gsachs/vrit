@@ -1,12 +1,9 @@
 // Merges a branch into the current branch — fast-forward or three-way
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::commands::branch::current_branch;
-use crate::commands::commit::resolve_head;
-use crate::commands::status::flatten_tree;
 use crate::config::Config;
 use crate::index::{Index, IndexEntry};
 use crate::object::{CommitData, Object};
@@ -28,7 +25,7 @@ pub fn execute(branch: Option<&str>, abort: bool) -> Result<(), String> {
     // Refuse if dirty working tree
     check_clean_working_tree(&vrit_dir, &repo_root)?;
 
-    let head_sha = resolve_head(&vrit_dir)?
+    let head_sha = repo::resolve_head(&vrit_dir)?
         .ok_or("no commits yet — nothing to merge into")?;
 
     // Resolve the branch to a commit SHA
@@ -80,12 +77,13 @@ fn fast_forward(
     target_sha: &str,
 ) -> Result<(), String> {
     // Update working tree and index to target
-    let target_entries = get_commit_tree(vrit_dir, target_sha)?;
-    let current_entries = get_head_tree(vrit_dir)?;
+    let target_entries = repo::commit_tree_entries(vrit_dir, target_sha)?;
+    let target_paths: HashSet<&String> = target_entries.iter().map(|(p, _, _)| p).collect();
+    let current_entries = repo::head_tree_entries(vrit_dir)?;
 
     // Remove files not in target
-    for (path, _) in &current_entries {
-        if !target_entries.iter().any(|(p, _)| p == path) {
+    for (path, _, _) in &current_entries {
+        if !target_paths.contains(path) {
             let file_path = repo_root.join(path);
             let _ = fs::remove_file(&file_path);
         }
@@ -93,10 +91,10 @@ fn fast_forward(
 
     // Write target files
     let mut index = Index::new();
-    for (path, sha) in &target_entries {
-        write_blob_to_working_tree(vrit_dir, repo_root, path, sha)?;
+    for (path, sha, mode) in &target_entries {
+        repo::write_blob_to_working_tree(vrit_dir, repo_root, path, sha, *mode)?;
         index.add(IndexEntry {
-            mode: 0o100644,
+            mode: *mode,
             sha: sha.clone(),
             path: path.clone(),
         });
@@ -104,7 +102,7 @@ fn fast_forward(
     index.save(vrit_dir)?;
 
     // Update branch ref
-    update_current_ref(vrit_dir, target_sha)?;
+    repo::update_current_ref(vrit_dir, target_sha)?;
 
     println!("Fast-forward merge to {branch} ({})", &target_sha[..7]);
     Ok(())
@@ -118,59 +116,65 @@ fn three_way_merge(
     base_sha: &str,
     branch_name: &str,
 ) -> Result<(), String> {
-    let base_entries = get_commit_tree(vrit_dir, base_sha)?;
-    let head_entries = get_commit_tree(vrit_dir, head_sha)?;
-    let other_entries = get_commit_tree(vrit_dir, other_sha)?;
+    let base_entries: HashMap<String, (String, u32)> = repo::commit_tree_entries(vrit_dir, base_sha)?
+        .into_iter().map(|(p, s, m)| (p, (s, m))).collect();
+    let head_entries: HashMap<String, (String, u32)> = repo::commit_tree_entries(vrit_dir, head_sha)?
+        .into_iter().map(|(p, s, m)| (p, (s, m))).collect();
+    let other_entries: HashMap<String, (String, u32)> = repo::commit_tree_entries(vrit_dir, other_sha)?
+        .into_iter().map(|(p, s, m)| (p, (s, m))).collect();
 
     // Collect all paths
-    let mut all_paths: HashSet<String> = HashSet::new();
-    for (p, _) in &base_entries {
-        all_paths.insert(p.clone());
-    }
-    for (p, _) in &head_entries {
-        all_paths.insert(p.clone());
-    }
-    for (p, _) in &other_entries {
-        all_paths.insert(p.clone());
-    }
+    let mut all_paths: HashSet<&String> = HashSet::new();
+    all_paths.extend(base_entries.keys());
+    all_paths.extend(head_entries.keys());
+    all_paths.extend(other_entries.keys());
 
     let mut index = Index::new();
     let mut has_conflicts = false;
-    let current_name = current_branch(vrit_dir).unwrap_or_else(|| head_sha[..7].to_string());
+    let current_name = repo::current_branch(vrit_dir).unwrap_or_else(|| head_sha[..7].to_string());
 
-    let mut sorted_paths: Vec<String> = all_paths.into_iter().collect();
+    let mut sorted_paths: Vec<&String> = all_paths.into_iter().collect();
     sorted_paths.sort();
 
     for path in &sorted_paths {
-        let base_sha_opt = find_sha(&base_entries, path);
-        let head_sha_opt = find_sha(&head_entries, path);
-        let other_sha_opt = find_sha(&other_entries, path);
+        let base_sha_opt = base_entries.get(*path).map(|(s, _)| s.as_str());
+        let head_val = head_entries.get(*path);
+        let other_val = other_entries.get(*path);
+        let head_sha_opt = head_val.map(|(s, _)| s.as_str());
+        let other_sha_opt = other_val.map(|(s, _)| s.as_str());
+        let resolved_mode = head_val.map(|(_, m)| *m)
+            .or_else(|| other_val.map(|(_, m)| *m))
+            .unwrap_or(0o100644);
 
         match (base_sha_opt, head_sha_opt, other_sha_opt) {
             // Unchanged in both sides
             (_, Some(h), Some(o)) if h == o => {
-                write_blob_to_working_tree(vrit_dir, repo_root, path, h)?;
-                index.add(make_entry(path, h));
+                repo::write_blob_to_working_tree(vrit_dir, repo_root, path, h, resolved_mode)?;
+                index.add(make_entry(path, h, resolved_mode));
             }
             // Changed only in head side
             (Some(b), Some(h), Some(o)) if b == o && b != h => {
-                write_blob_to_working_tree(vrit_dir, repo_root, path, h)?;
-                index.add(make_entry(path, h));
+                let mode = head_val.map(|(_, m)| *m).unwrap_or(0o100644);
+                repo::write_blob_to_working_tree(vrit_dir, repo_root, path, h, mode)?;
+                index.add(make_entry(path, h, mode));
             }
             // Changed only in other side
             (Some(b), Some(h), Some(o)) if b == h && b != o => {
-                write_blob_to_working_tree(vrit_dir, repo_root, path, o)?;
-                index.add(make_entry(path, o));
+                let mode = other_val.map(|(_, m)| *m).unwrap_or(0o100644);
+                repo::write_blob_to_working_tree(vrit_dir, repo_root, path, o, mode)?;
+                index.add(make_entry(path, o, mode));
             }
             // Added only in head
             (None, Some(h), None) => {
-                write_blob_to_working_tree(vrit_dir, repo_root, path, h)?;
-                index.add(make_entry(path, h));
+                let mode = head_val.map(|(_, m)| *m).unwrap_or(0o100644);
+                repo::write_blob_to_working_tree(vrit_dir, repo_root, path, h, mode)?;
+                index.add(make_entry(path, h, mode));
             }
             // Added only in other
             (None, None, Some(o)) => {
-                write_blob_to_working_tree(vrit_dir, repo_root, path, o)?;
-                index.add(make_entry(path, o));
+                let mode = other_val.map(|(_, m)| *m).unwrap_or(0o100644);
+                repo::write_blob_to_working_tree(vrit_dir, repo_root, path, o, mode)?;
+                index.add(make_entry(path, o, mode));
             }
             // Deleted in one side, unchanged in other
             (Some(b), None, Some(o)) if b == o => {
@@ -192,13 +196,14 @@ fn three_way_merge(
                     .map_err(|e| format!("cannot write '{path}': {e}"))?;
                 let blob = Object::Blob(content.into_bytes());
                 let sha = blob.write_to_store(vrit_dir)?;
-                index.add(make_entry(path, &sha));
+                index.add(make_entry(path, &sha, resolved_mode));
                 has_conflicts = true;
                 println!("CONFLICT (modify/delete): {path} deleted in {current_name} and modified in {branch_name}");
             }
             (Some(_), Some(h), None) => {
-                write_blob_to_working_tree(vrit_dir, repo_root, path, h)?;
-                index.add(make_entry(path, h));
+                let mode = head_val.map(|(_, m)| *m).unwrap_or(0o100644);
+                repo::write_blob_to_working_tree(vrit_dir, repo_root, path, h, mode)?;
+                index.add(make_entry(path, h, mode));
                 has_conflicts = true;
                 println!("CONFLICT (modify/delete): {path} modified in {current_name} and deleted in {branch_name}");
             }
@@ -220,7 +225,7 @@ fn three_way_merge(
                     .map_err(|e| format!("cannot write '{path}': {e}"))?;
                 let blob = Object::Blob(merged.into_bytes());
                 let conflict_sha = blob.write_to_store(vrit_dir)?;
-                index.add(make_entry(path, &conflict_sha));
+                index.add(make_entry(path, &conflict_sha, resolved_mode));
                 has_conflicts = true;
                 println!("CONFLICT (content): Merge conflict in {path}");
             }
@@ -271,7 +276,7 @@ fn auto_commit_merge(
         .as_secs();
     let author_line = format!("{name} <{email}> {timestamp} +0000");
 
-    let current_name = current_branch(vrit_dir).unwrap_or_else(|| head_sha[..7].to_string());
+    let current_name = repo::current_branch(vrit_dir).unwrap_or_else(|| head_sha[..7].to_string());
     let message = format!("Merge branch '{branch_name}' into {current_name}\n");
 
     let commit = Object::Commit(CommitData {
@@ -282,7 +287,7 @@ fn auto_commit_merge(
         message,
     });
     let sha = commit.write_to_store(vrit_dir)?;
-    update_current_ref(vrit_dir, &sha)?;
+    repo::update_current_ref(vrit_dir, &sha)?;
 
     println!("Merge made by the 'recursive' strategy.");
     Ok(())
@@ -294,15 +299,15 @@ fn abort_merge(vrit_dir: &Path, repo_root: &Path) -> Result<(), String> {
     }
 
     // Reset index and working tree to HEAD
-    let head_sha = resolve_head(vrit_dir)?
+    let head_sha = repo::resolve_head(vrit_dir)?
         .ok_or("no HEAD commit")?;
-    let entries = get_commit_tree(vrit_dir, &head_sha)?;
+    let entries = repo::commit_tree_entries(vrit_dir, &head_sha)?;
 
     // Restore all files from HEAD
     let mut index = Index::new();
-    for (path, sha) in &entries {
-        write_blob_to_working_tree(vrit_dir, repo_root, path, sha)?;
-        index.add(make_entry(path, sha));
+    for (path, sha, mode) in &entries {
+        repo::write_blob_to_working_tree(vrit_dir, repo_root, path, sha, *mode)?;
+        index.add(make_entry(path, sha, *mode));
     }
     index.save(vrit_dir)?;
 
@@ -378,7 +383,8 @@ fn check_clean_working_tree(vrit_dir: &Path, repo_root: &Path) -> Result<(), Str
         if !file_path.exists() {
             continue;
         }
-        let content = fs::read(&file_path).unwrap_or_default();
+        let content = fs::read(&file_path)
+            .map_err(|e| format!("cannot read '{}': {e}", entry.path))?;
         let blob = Object::Blob(content);
         if blob.sha() != entry.sha {
             return Err(
@@ -400,77 +406,12 @@ fn write_conflict_markers(
     )
 }
 
-fn update_current_ref(vrit_dir: &Path, sha: &str) -> Result<(), String> {
-    let head = fs::read_to_string(vrit_dir.join("HEAD"))
-        .map_err(|e| format!("cannot read HEAD: {e}"))?;
-    let head = head.trim();
-
-    if let Some(ref_path) = head.strip_prefix("ref: ") {
-        let full_path = vrit_dir.join(ref_path);
-        let tmp = full_path.with_extension("tmp");
-        fs::write(&tmp, format!("{sha}\n"))
-            .map_err(|e| format!("cannot write ref: {e}"))?;
-        fs::rename(&tmp, &full_path)
-            .map_err(|e| format!("cannot update ref: {e}"))?;
-    } else {
-        let tmp = vrit_dir.join("HEAD.tmp");
-        fs::write(&tmp, format!("{sha}\n"))
-            .map_err(|e| format!("cannot write HEAD: {e}"))?;
-        fs::rename(&tmp, vrit_dir.join("HEAD"))
-            .map_err(|e| format!("cannot update HEAD: {e}"))?;
-    }
-    Ok(())
-}
-
-fn get_head_tree(vrit_dir: &Path) -> Result<Vec<(String, String)>, String> {
-    match resolve_head(vrit_dir)? {
-        Some(sha) => get_commit_tree(vrit_dir, &sha),
-        None => Ok(Vec::new()),
-    }
-}
-
-fn get_commit_tree(
-    vrit_dir: &Path,
-    commit_sha: &str,
-) -> Result<Vec<(String, String)>, String> {
-    let obj = Object::read_from_store(vrit_dir, commit_sha)?;
-    match obj {
-        Object::Commit(cd) => flatten_tree(vrit_dir, &cd.tree, ""),
-        _ => Err(format!("{commit_sha} is not a commit")),
-    }
-}
-
-fn find_sha<'a>(entries: &'a [(String, String)], path: &str) -> Option<&'a str> {
-    entries
-        .iter()
-        .find(|(p, _)| p == path)
-        .map(|(_, s)| s.as_str())
-}
-
-fn make_entry(path: &str, sha: &str) -> IndexEntry {
+fn make_entry(path: &str, sha: &str, mode: u32) -> IndexEntry {
     IndexEntry {
-        mode: 0o100644,
+        mode,
         sha: sha.to_string(),
         path: path.to_string(),
     }
-}
-
-fn write_blob_to_working_tree(
-    vrit_dir: &Path,
-    repo_root: &Path,
-    path: &str,
-    sha: &str,
-) -> Result<(), String> {
-    let obj = Object::read_from_store(vrit_dir, sha)?;
-    if let Object::Blob(content) = obj {
-        let file_path = repo_root.join(path);
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).ok();
-        }
-        fs::write(&file_path, &content)
-            .map_err(|e| format!("cannot write '{path}': {e}"))?;
-    }
-    Ok(())
 }
 
 fn read_blob_content(vrit_dir: &Path, sha: &str) -> Result<String, String> {

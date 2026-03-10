@@ -2,7 +2,6 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::commands::commit::resolve_head;
 use crate::config::Config;
 use crate::object::{Object, TagData};
 use crate::repo;
@@ -41,38 +40,11 @@ fn list_tags(vrit_dir: &std::path::Path) -> Result<(), String> {
     }
 
     let mut tags: Vec<String> = Vec::new();
-    collect_tags(&tags_dir, "", &mut tags)?;
+    repo::collect_refs(&tags_dir, "", &mut tags)?;
     tags.sort();
 
     for tag in &tags {
         println!("{tag}");
-    }
-    Ok(())
-}
-
-fn collect_tags(
-    dir: &std::path::Path,
-    prefix: &str,
-    tags: &mut Vec<String>,
-) -> Result<(), String> {
-    let entries = fs::read_dir(dir)
-        .map_err(|e| format!("cannot read refs/tags: {e}"))?;
-
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("directory entry error: {e}"))?;
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let full = if prefix.is_empty() {
-            name
-        } else {
-            format!("{prefix}/{name}")
-        };
-
-        if path.is_dir() {
-            collect_tags(&path, &full, tags)?;
-        } else {
-            tags.push(full);
-        }
     }
     Ok(())
 }
@@ -82,6 +54,7 @@ fn create_lightweight(
     name: &str,
     target_sha: &str,
 ) -> Result<(), String> {
+    repo::validate_ref_name(name)?;
     let ref_path = vrit_dir.join("refs/tags").join(name);
     if ref_path.exists() {
         return Err(format!("tag '{name}' already exists"));
@@ -104,6 +77,7 @@ fn create_annotated(
     target_sha: &str,
     message: &str,
 ) -> Result<(), String> {
+    repo::validate_ref_name(name)?;
     let ref_path = vrit_dir.join("refs/tags").join(name);
     if ref_path.exists() {
         return Err(format!("tag '{name}' already exists"));
@@ -146,6 +120,7 @@ fn create_annotated(
 }
 
 fn delete_tag(vrit_dir: &std::path::Path, name: &str) -> Result<(), String> {
+    repo::validate_ref_name(name)?;
     let ref_path = vrit_dir.join("refs/tags").join(name);
     if !ref_path.exists() {
         return Err(format!("tag '{name}' not found"));
@@ -169,6 +144,6 @@ fn resolve_target(
                 .map_err(|_| format!("commit '{sha}' not found"))?;
             Ok(sha.to_string())
         }
-        None => resolve_head(vrit_dir)?.ok_or("no commits yet".into()),
+        None => repo::resolve_head(vrit_dir)?.ok_or("no commits yet".into()),
     }
 }

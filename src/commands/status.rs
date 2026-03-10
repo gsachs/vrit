@@ -1,9 +1,8 @@
 // Shows working tree status: staged, modified, untracked files
 use colored::Colorize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 
-use crate::commands::commit::resolve_head;
 use crate::ignore::IgnoreRules;
 use crate::index::Index;
 use crate::object::Object;
@@ -37,7 +36,7 @@ pub fn execute() -> Result<(), String> {
     }
 
     // Get HEAD tree entries for comparison
-    let head_entries = head_tree_entries(&vrit_dir)?;
+    let head_entries: HashMap<String, String> = repo::head_tree_entries(&vrit_dir)?.into_iter().map(|(p, s, _)| (p, s)).collect();
 
     // Staged changes: diff HEAD tree vs index
     let mut staged_new: Vec<String> = Vec::new();
@@ -47,7 +46,7 @@ pub fn execute() -> Result<(), String> {
     let index_paths: BTreeSet<&str> = index.entries.iter().map(|e| e.path.as_str()).collect();
 
     for entry in &index.entries {
-        if let Some(head_sha) = head_entries.iter().find(|(p, _)| p == &entry.path).map(|(_, s)| s) {
+        if let Some(head_sha) = head_entries.get(&entry.path) {
             if head_sha != &entry.sha {
                 staged_modified.push(entry.path.clone());
             }
@@ -55,7 +54,7 @@ pub fn execute() -> Result<(), String> {
             staged_new.push(entry.path.clone());
         }
     }
-    for (path, _) in &head_entries {
+    for path in head_entries.keys() {
         if !index_paths.contains(path.as_str()) {
             staged_deleted.push(path.clone());
         }
@@ -70,7 +69,13 @@ pub fn execute() -> Result<(), String> {
         if !file_path.exists() {
             deleted.push(entry.path.clone());
         } else {
-            let content = fs::read(&file_path).unwrap_or_default();
+            let content = match fs::read(&file_path) {
+                Ok(c) => c,
+                Err(_) => {
+                    modified.push(entry.path.clone());
+                    continue;
+                }
+            };
             let blob = Object::Blob(content);
             if blob.sha() != entry.sha {
                 modified.push(entry.path.clone());
@@ -79,7 +84,8 @@ pub fn execute() -> Result<(), String> {
     }
 
     // Untracked files
-    let untracked = find_untracked(&repo_root, &repo_root, &index, &ignore)?;
+    let mut untracked = find_untracked(&repo_root, &repo_root, &index, &ignore)?;
+    untracked.sort();
 
     // Display
     let has_staged = !staged_new.is_empty() || !staged_modified.is_empty() || !staged_deleted.is_empty();
@@ -126,53 +132,6 @@ pub fn execute() -> Result<(), String> {
     Ok(())
 }
 
-/// Flatten a commit's tree into (path, sha) pairs.
-fn head_tree_entries(
-    vrit_dir: &std::path::Path,
-) -> Result<Vec<(String, String)>, String> {
-    let head_sha = resolve_head(vrit_dir)?;
-    let head_sha = match head_sha {
-        Some(s) => s,
-        None => return Ok(Vec::new()),
-    };
-
-    let commit = Object::read_from_store(vrit_dir, &head_sha)?;
-    let tree_sha = match commit {
-        Object::Commit(cd) => cd.tree,
-        _ => return Err("HEAD does not point to a commit".into()),
-    };
-
-    flatten_tree(vrit_dir, &tree_sha, "")
-}
-
-pub fn flatten_tree(
-    vrit_dir: &std::path::Path,
-    tree_sha: &str,
-    prefix: &str,
-) -> Result<Vec<(String, String)>, String> {
-    let obj = Object::read_from_store(vrit_dir, tree_sha)?;
-    let entries = match obj {
-        Object::Tree(e) => e,
-        _ => return Err(format!("{tree_sha} is not a tree")),
-    };
-
-    let mut result = Vec::new();
-    for entry in &entries {
-        let full_path = if prefix.is_empty() {
-            entry.name.clone()
-        } else {
-            format!("{prefix}/{}", entry.name)
-        };
-
-        if entry.mode == "40000" {
-            result.extend(flatten_tree(vrit_dir, &entry.sha, &full_path)?);
-        } else {
-            result.push((full_path, entry.sha.clone()));
-        }
-    }
-    Ok(result)
-}
-
 fn find_untracked(
     dir: &std::path::Path,
     repo_root: &std::path::Path,
@@ -210,6 +169,5 @@ fn find_untracked(
         }
     }
 
-    untracked.sort();
     Ok(untracked)
 }

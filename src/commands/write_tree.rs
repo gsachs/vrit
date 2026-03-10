@@ -55,20 +55,11 @@ pub fn write_tree_from_index(index: &Index, vrit_dir: &Path) -> Result<String, S
         });
     }
 
-    // Sort entries by name (Git convention)
+    // Sort entries by name (Git convention: directories compare with trailing /)
     root_entries.sort_by(|a, b| {
-        // Directories sort with trailing / for comparison
-        let a_key = if a.mode == "40000" {
-            format!("{}/", a.name)
-        } else {
-            a.name.clone()
-        };
-        let b_key = if b.mode == "40000" {
-            format!("{}/", b.name)
-        } else {
-            b.name.clone()
-        };
-        a_key.cmp(&b_key)
+        let a_suffix = if a.mode == "40000" { "/" } else { "" };
+        let b_suffix = if b.mode == "40000" { "/" } else { "" };
+        (a.name.as_str(), a_suffix).cmp(&(b.name.as_str(), b_suffix))
     });
 
     let tree = Object::Tree(root_entries);
