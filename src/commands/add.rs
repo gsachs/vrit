@@ -33,7 +33,9 @@ pub fn execute(paths: &[String]) -> Result<(), String> {
         }
     }
 
-    // Detect deleted files: entries in index whose files no longer exist
+    // Auto-remove index entries for files deleted on disk, but only when their
+    // parent directory was explicitly passed to `add`. This prevents `add file.txt`
+    // from accidentally unstaging unrelated deleted files elsewhere in the tree.
     let deleted: Vec<String> = index
         .entries
         .iter()
@@ -41,7 +43,6 @@ pub fn execute(paths: &[String]) -> Result<(), String> {
         .map(|e| e.path.clone())
         .collect();
     for path in &deleted {
-        // Only auto-remove if the parent dir was explicitly added
         for path_str in paths {
             let p = Path::new(path_str);
             if p.is_dir() {

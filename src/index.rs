@@ -108,9 +108,10 @@ impl Index {
             .read_exact(&mut count_buf)
             .map_err(|_| "truncated index header")?;
         let count = u32::from_be_bytes(count_buf) as usize;
-        // Minimum entry size: 4 (mode) + 20 (sha) + 2 (path_len) + 1 (min path) = 27 bytes
-        let min_entry_size = 27;
-        let remaining = data.len().saturating_sub(5); // subtract version + count header
+        // Reject obviously-corrupt count values before allocating, to prevent a crafted
+        // index from triggering a multi-GB Vec allocation
+        let min_entry_size = 27; // 4 (mode) + 20 (sha) + 2 (path_len) + 1 (min path)
+        let remaining = data.len().saturating_sub(5);
         if count > remaining / min_entry_size {
             return Err(format!(
                 "index claims {count} entries but data is too small"

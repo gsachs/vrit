@@ -106,6 +106,8 @@ fn create_annotated(
         tagger: tagger_line,
         message: msg,
     });
+    // Annotated tags point ref → tag object → commit (unlike lightweight: ref → commit directly).
+    // This indirection stores the tagger, message, and timestamp alongside the ref.
     let tag_sha = tag_obj.write_to_store(vrit_dir)?;
 
     if let Some(parent) = ref_path.parent() {

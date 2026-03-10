@@ -63,7 +63,7 @@ pub fn myers_diff(old: &[&str], new: &[&str]) -> Vec<Edit> {
 
             if x >= n && y >= m {
                 v = new_v;
-                trace.push(v.clone());
+                trace.push(v.clone()); // final frontier snapshot needed for backtracking
                 break 'outer;
             }
             k += 2;
@@ -166,7 +166,7 @@ pub fn make_hunks(edits: &[Edit], context: usize) -> Vec<Hunk> {
     let mut group_end = changes[0].1;
 
     for &(start, end) in &changes[1..] {
-        if start <= group_end + 2 * context {
+        if start <= group_end + 2 * context { // merge hunks whose context lines would overlap
             group_end = end;
         } else {
             hunks.push(build_hunk(edits, group_start, group_end, context));

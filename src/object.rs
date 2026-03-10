@@ -88,7 +88,7 @@ impl Object {
         let data = self.serialize();
         let sha = Self::hash_bytes(&data);
 
-        validate_sha(&sha)?;
+        validate_sha(&sha)?; // also prevents directory traversal via crafted SHA in path construction below
         let dir = vrit_dir.join("objects").join(&sha[..2]);
         let file = dir.join(&sha[2..]);
 
@@ -124,6 +124,7 @@ impl Object {
         let compressed = fs::read(&path)
             .map_err(|_| format!("object not found: {sha}"))?;
 
+        // Cap decompressed size to prevent a small compressed payload from expanding into OOM
         const MAX_OBJECT_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
         let decoder = ZlibDecoder::new(&compressed[..]);
         let mut data = Vec::new();
@@ -263,6 +264,7 @@ fn parse_tree(data: &[u8]) -> Result<Object, String> {
             .map_err(|_| "invalid name in tree entry")?
             .to_string();
 
+        // Reject traversal sequences that could escape the repo when tree entries are written to disk
         if name.contains("..") || name.starts_with('/') || name.contains('\0') {
             return Err(format!("invalid tree entry name: {name}"));
         }

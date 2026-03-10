@@ -55,7 +55,9 @@ pub fn write_tree_from_index(index: &Index, vrit_dir: &Path) -> Result<String, S
         });
     }
 
-    // Sort entries by name (Git convention: directories compare with trailing /)
+    // Git sorts tree entries as if directories have a trailing "/", which affects
+    // ordering between files and dirs with overlapping name prefixes (e.g., "foo" vs "foo.c").
+    // Matching this exactly is required for SHA-compatible tree hashing.
     root_entries.sort_by(|a, b| {
         let a_suffix = if a.mode == "40000" { "/" } else { "" };
         let b_suffix = if b.mode == "40000" { "/" } else { "" };

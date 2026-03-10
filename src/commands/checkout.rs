@@ -162,6 +162,8 @@ fn check_dirty_files(
             let target_sha_for_path = target_entries
                 .get(&entry.path)
                 .map(|(s, _)| s.as_str());
+            // Only block if the target tree has a different version — if it matches
+            // the index, the checkout won't overwrite the user's dirty changes
             if target_sha_for_path != Some(&entry.sha) {
                 return Err(format!(
                     "Your local changes to '{}' would be overwritten by checkout.\n\

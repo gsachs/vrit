@@ -316,7 +316,8 @@ fn abort_merge(vrit_dir: &Path, repo_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Find the lowest common ancestor of two commits using BFS.
+/// Find the lowest common ancestor via BFS: collect all ancestors of sha1,
+/// then BFS from sha2 — the first hit is the LCA because BFS explores by distance.
 pub fn find_merge_base(
     vrit_dir: &Path,
     sha1: &str,

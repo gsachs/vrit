@@ -56,6 +56,7 @@ pub fn execute(message: &str) -> Result<(), String> {
         all_parents.push(merge_sha);
     }
 
+    // Git convention: commit messages always end with a newline
     let message = if message.ends_with('\n') {
         message.to_string()
     } else {

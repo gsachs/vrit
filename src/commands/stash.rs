@@ -92,7 +92,8 @@ pub fn execute_stash() -> Result<(), String> {
         .as_secs();
     let author_line = format!("{name} <{email}> {timestamp} +0000");
 
-    // Parent chain: HEAD is first parent, previous stash (if any) is second parent
+    // Stashes form a linked list via second parent: HEAD → stash@{0} → stash@{1} → ...
+    // First parent is always the HEAD commit at stash time (for context), second is the previous stash.
     let stash_ref_path = vrit_dir.join("refs/stash");
     let mut parents = vec![head_sha.clone()];
     if stash_ref_path.exists() {

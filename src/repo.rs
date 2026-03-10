@@ -43,6 +43,7 @@ pub fn resolve_head(vrit_dir: &Path) -> Result<Option<String>, String> {
     let head = head_content.trim();
 
     if let Some(ref_path) = head.strip_prefix("ref: ") {
+        // Prevent a crafted HEAD from reading arbitrary files via symref resolution
         if !ref_path.starts_with("refs/") || ref_path.contains("..") {
             return Err(format!("invalid HEAD ref path: {ref_path}"));
         }
@@ -114,10 +115,10 @@ pub fn flatten_tree(
             format!("{prefix}/{}", entry.name)
         };
 
-        if entry.mode == "40000" {
+        if entry.mode == "40000" { // git tree mode for subdirectories
             result.extend(flatten_tree(vrit_dir, &entry.sha, &full_path)?);
         } else {
-            let mode = u32::from_str_radix(&entry.mode, 8).unwrap_or(0o100644);
+            let mode = u32::from_str_radix(&entry.mode, 8).unwrap_or(0o100644); // default to regular file if mode is unparseable
             result.push((full_path, entry.sha.clone(), mode));
         }
     }
