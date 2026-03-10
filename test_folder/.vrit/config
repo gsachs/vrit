@@ -1,0 +1,4 @@
+# vrit configuration
+# Required: set your identity before committing
+# user.name = Your Name
+# user.email = you@example.com

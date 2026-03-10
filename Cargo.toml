@@ -1,0 +1,11 @@
+[package]
+name = "vrit"
+version = "0.1.0"
+edition = "2024"
+description = "A learning-oriented Git reimplementation in Rust"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+sha1 = "0.10"
+flate2 = "1"
+colored = "2"

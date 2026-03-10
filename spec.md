@@ -48,7 +48,8 @@ vrit uses the same four object primitives as Git:
 - **Branch refs:** plain text files at `.vrit/refs/heads/<branch-name>` containing a 40-char SHA-1
 - **Tag refs:** plain text files at `.vrit/refs/tags/<tag-name>` (lightweight) or pointing to a tag object SHA (annotated)
 - **HEAD:** `.vrit/HEAD` contains either `ref: refs/heads/<branch>` (on a branch) or a raw SHA-1 (detached HEAD)
-- **Stash:** stored at `.vrit/refs/stash` as a stack of hidden commits, following Git's model. Each stash entry is a commit with the working tree state, with its parent being the HEAD at stash time
+- **Stash:** stored at `.vrit/refs/stash` as a linked list of hidden commits. The ref points to the most recent stash commit; each stash commit's parent is the previous stash entry. This avoids needing a reflog. Each stash captures staged + unstaged modifications (not untracked files)
+- **Merge state:** during a conflicted merge, `.vrit/MERGE_HEAD` holds the other branch's tip SHA and `.vrit/MERGE_MSG` holds the auto-generated merge message. `vrit commit` checks for MERGE_HEAD to create a two-parent merge commit. Cleaned up by `vrit merge --abort`
 
 ### Ref Updates & Crash Safety
 
@@ -57,9 +58,11 @@ All ref updates (HEAD, branch pointers) use **atomic rename**: write the new val
 ### Configuration
 
 - **File:** `.vrit/config` — simple `key = value` format (one pair per line)
-- **Required keys:** `user.name`, `user.email` (used in commit authorship)
+- **Required keys:** `user.name`, `user.email` (used in commit authorship). `vrit commit` errors with a clear message if either is missing
+- **Bootstrapping:** `vrit init` prints instructions to edit `.vrit/config`. No `vrit config` command — manual editing only
 - **Default branch:** `main`
-- **No global config file.** Per-repo only.
+- **No global config file.** Per-repo only
+- **Re-init:** `vrit init` in an existing repo prints "Reinitialized existing vrit repository" and leaves objects/refs untouched
 
 ### Ignore Rules
 
@@ -76,6 +79,12 @@ All ref updates (HEAD, branch pointers) use **atomic rename**: write the new val
 - Binary files are tracked as blobs (full snapshots) but excluded from diff and merge operations
 - `vrit status` and `vrit diff` mark binary files as "binary" rather than showing content
 
+### Detached HEAD
+
+- **Committing:** allowed. Writes commit SHA directly to HEAD instead of updating a branch ref
+- **Warning:** `vrit status` and `vrit checkout <sha>` print a "detached HEAD" warning
+- **Risk:** commits made in detached HEAD become unreachable after switching to a branch (no reflog). Acceptable for a learning tool — users are warned
+
 ### Symlinks
 
 - **Not supported.** Symlinks in the working directory are silently skipped during `vrit add` and `vrit status`
@@ -88,10 +97,11 @@ All ref updates (HEAD, branch pointers) use **atomic rename**: write the new val
 | Command | Description |
 |---|---|
 | `vrit init` | Create a new `.vrit` repository in the current directory |
-| `vrit add <paths...>` | Stage files for the next commit |
+| `vrit add <paths...>` | Stage files for the next commit. Accepts directories (recursive). Auto-detects deleted files and removes from index |
+| `vrit rm <path>` | Remove a file from the index (and optionally from working tree). Stages the deletion |
 | `vrit commit -m "<msg>"` | Create a commit from staged changes. `-m` flag is required (no editor integration) |
 | `vrit status` | Show working tree status: staged, modified, untracked files |
-| `vrit log` | Show commit history (linear walk from HEAD) |
+| `vrit log` | Show commit history from HEAD (full DAG traversal with topological sort, follows all parents) |
 | `vrit cat-file -p <sha>` | Pretty-print any object (blob, tree, commit, tag) |
 | `vrit hash-object <file>` | Compute and optionally store a blob for a file |
 | `vrit diff` | Show unstaged changes (working dir vs index). `vrit diff --staged` for index vs HEAD |
@@ -101,9 +111,11 @@ All ref updates (HEAD, branch pointers) use **atomic rename**: write the new val
 | Command | Description |
 |---|---|
 | `vrit branch [name]` | List branches or create a new branch |
-| `vrit branch -d <name>` | Delete a branch |
-| `vrit checkout <branch>` | Switch branches. `vrit checkout -- <file>` to restore a file from HEAD |
-| `vrit merge <branch>` | Three-way merge of the given branch into the current branch |
+| `vrit branch -d <name>` | Delete a branch. Refuses to delete the current branch |
+| `vrit checkout <branch>` | Switch branches. Refuses if dirty tracked files would be overwritten. `vrit checkout -- <file>` to restore a file from HEAD |
+| `vrit checkout <sha>` | Enter detached HEAD state (writes raw SHA to HEAD, prints warning) |
+| `vrit merge <branch>` | Merge the given branch into the current branch. Fast-forwards when possible, otherwise three-way merge |
+| `vrit merge --abort` | Abort a conflicted merge: clear MERGE_HEAD/MERGE_MSG, reset index and working tree to HEAD |
 
 ### Tags (Phase 4)
 
@@ -119,9 +131,9 @@ All ref updates (HEAD, branch pointers) use **atomic rename**: write the new val
 | Command | Description |
 |---|---|
 | `vrit reset [commit]` | Move HEAD to `<commit>` and unstage all changes (mixed mode only, no `--hard` or `--soft`) |
-| `vrit stash` | Save working directory changes to the stash stack |
-| `vrit stash pop` | Apply the most recent stash and remove it from the stack |
-| `vrit stash list` | List stash entries |
+| `vrit stash` | Save staged + unstaged changes to the stash stack (errors if clean). Resets working tree to HEAD |
+| `vrit stash pop` | Apply the most recent stash and remove from stack. On conflict, keeps the stash entry |
+| `vrit stash list` | List stash entries (walks parent chain from refs/stash) |
 
 ### Plumbing (available from Phase 1)
 
@@ -142,7 +154,9 @@ vrit implements the **Myers diff algorithm** from scratch rather than using a li
 
 ## Merge Strategy
 
-Three-way merge:
+**Fast-forward merge (default):** when the current branch is a direct ancestor of the merge target, just move the branch pointer. No merge commit created. This is the default behavior, matching Git.
+
+**Three-way merge** (when fast-forward is not possible):
 
 1. Find the **merge base** — the common ancestor of the two branch tips (using BFS on parent links)
 2. Diff the base against each branch tip
@@ -150,12 +164,20 @@ Three-way merge:
    - Changed in only one side → take that side's version
    - Changed in both sides with identical result → take either (they agree)
    - Changed in both sides with different results → **conflict**
-4. Conflicts are marked with `<<<<<<<`, `=======`, `>>>>>>>` markers in the file
-5. Conflicted files are left unstaged. User resolves manually, then `vrit add` + `vrit commit`
+   - Added on both sides with different content → **conflict**
+   - Deleted on one side, modified on other → **conflict**
+4. Conflicts are marked with `<<<<<<<`, `=======`, `>>>>>>>` markers in the file (with branch names)
+5. On clean merge: auto-commit with generated message (e.g., "Merge branch 'feature' into main"). This is the one exception to the `-m` requirement
+6. On conflict: write `.vrit/MERGE_HEAD` and `.vrit/MERGE_MSG`. Conflicted files are left unstaged. User resolves manually, then `vrit add` + `vrit commit` (which reads MERGE_HEAD to create a two-parent commit)
+7. `vrit merge --abort` clears state files and resets index/working tree to pre-merge HEAD
+
+**Dirty working tree:** vrit refuses to merge if tracked files have uncommitted changes. Clear error message: "Please commit or stash your changes before merging."
+
+**Merge with self:** `vrit merge <current-branch>` is a no-op with a message "Already up to date."
+
+**Merge in detached HEAD:** allowed — updates HEAD directly.
 
 > **Tradeoff:** this handles the common case but not criss-cross merges (where the merge base is itself a merge). Git's recursive strategy handles this by merging the merge bases first. Deferred — criss-cross merges are rare in small repos.
-
-> **OPEN:** How should vrit handle merge when the working directory has uncommitted changes? Options: (A) refuse to merge, (B) stash automatically, (C) attempt merge and abort if conflicts touch dirty files. Git does (C) with nuance. Simplest correct answer is (A) — refuse with a clear error message.
 
 ## Terminal Output
 
@@ -175,6 +197,8 @@ Three-way merge:
 ```
 .vrit/
 ├── HEAD              # ref: refs/heads/main (or detached SHA)
+├── MERGE_HEAD        # (temporary) other branch's tip SHA during conflicted merge
+├── MERGE_MSG         # (temporary) auto-generated merge commit message
 ├── config            # user.name, user.email
 ├── index             # binary staging area
 ├── objects/
@@ -185,7 +209,7 @@ Three-way merge:
 └── refs/
     ├── heads/        # branch refs
     ├── tags/         # tag refs
-    └── stash         # stash ref (created on first stash)
+    └── stash         # stash ref (created on first stash, parent-chain for stack)
 ```
 
 ## Testing Strategy
@@ -202,14 +226,14 @@ Three-way merge:
 **Validation:** `vrit init` creates a valid `.vrit` directory. `vrit hash-object <file>` produces the same SHA as `git hash-object <file>`. `vrit cat-file -p <sha>` displays the object.
 
 ### Phase 2: Index, Add, Commit, Status, Log, Diff
-Implement the staging area, `vrit add`, `vrit commit`, `vrit status`, `vrit log`, and `vrit diff` (with Myers algorithm). Linear history on a single branch.
+Implement the staging area, `vrit add` (with directory support and deletion detection), `vrit rm`, `vrit commit`, `vrit status`, `vrit log` (full DAG traversal), and `vrit diff` (with Myers algorithm). Linear history on a single branch. `.vritignore` support. Design commit to support multi-parent (for Phase 3) even though Phase 2 only uses single-parent.
 
-**Validation:** can create a repo, add files, make multiple commits, view history, and see diffs between versions.
+**Validation:** can create a repo, add files, commit, modify, see status/diff, commit again, view log. Deleted files tracked correctly. Ignored files excluded.
 
 ### Phase 3: Branching & Merging
-`vrit branch`, `vrit checkout`, `vrit merge`. Implement branch creation, switching (updating HEAD + working tree + index), and three-way merge with conflict markers.
+`vrit branch`, `vrit checkout`, `vrit merge` (including `--abort`). Implement branch creation/deletion, switching (refuse on dirty tracked files), detached HEAD, fast-forward merge, three-way merge with conflict markers and MERGE_HEAD/MERGE_MSG state tracking.
 
-**Validation:** create a branch, make diverging commits, merge with and without conflicts.
+**Validation:** create a branch, make diverging commits, merge cleanly (fast-forward and three-way). Create conflicts, resolve, abort. Checkout refuses on dirty tree.
 
 ### Phase 4: Tags
 Lightweight and annotated tags. `vrit tag` commands.
@@ -217,9 +241,9 @@ Lightweight and annotated tags. `vrit tag` commands.
 **Validation:** create both tag types, verify annotated tags create tag objects, list and delete tags.
 
 ### Phase 5: Reset & Stash
-`vrit reset` (mixed mode), `vrit stash` / `vrit stash pop` / `vrit stash list`.
+`vrit reset` (mixed mode — default to HEAD for unstaging, or move branch pointer for other commits; warn about unreachable commits). `vrit stash` (staged + unstaged, error on clean tree) / `vrit stash pop` (keep stash on conflict) / `vrit stash list` (walk parent chain).
 
-**Validation:** reset moves HEAD and unstages. Stash saves and restores working directory changes.
+**Validation:** reset moves HEAD and unstages. Stash saves and restores working directory changes. Multiple stashes stack correctly. Pop preserves stash on conflict.
 
 ### Phase 6 (stretch): Packfiles
 Implement pack file creation (delta compression) and reading. Add `vrit gc` to pack loose objects.
