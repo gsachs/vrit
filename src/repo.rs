@@ -1,4 +1,5 @@
 // Repository discovery and shared ref/tree operations
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -143,6 +144,17 @@ pub fn head_tree_entries(vrit_dir: &Path) -> Result<Vec<(String, String, u32)>, 
     }
 }
 
+/// Like `commit_tree_entries`, but returns a HashMap keyed by path.
+pub fn commit_tree_entries_map(
+    vrit_dir: &Path,
+    commit_sha: &str,
+) -> Result<HashMap<String, (String, u32)>, String> {
+    Ok(commit_tree_entries(vrit_dir, commit_sha)?
+        .into_iter()
+        .map(|(p, s, m)| (p, (s, m)))
+        .collect())
+}
+
 /// Recursively collect ref names from a directory (used for branches and tags).
 pub fn collect_refs(
     dir: &Path,
@@ -180,20 +192,29 @@ pub fn write_blob_to_working_tree(
     mode: u32,
 ) -> Result<(), String> {
     let obj = Object::read_from_store(vrit_dir, sha)?;
-    if let Object::Blob(content) = obj {
-        let file_path = repo_root.join(path);
-        let canonical = file_path.canonicalize().unwrap_or_else(|_| file_path.clone());
-        let root_canonical = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
-        if !canonical.starts_with(&root_canonical) {
+    let content = match obj {
+        Object::Blob(data) => data,
+        _ => return Err(format!("expected blob for '{path}', got {}", obj.type_str())),
+    };
+
+    // Path traversal check: resolve against repo root without requiring file to exist.
+    // Normalize by resolving the parent (which must exist after create_dir_all) and
+    // appending the file name, avoiding canonicalize on the not-yet-created file.
+    let file_path = repo_root.join(path);
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).ok();
+        let parent_canonical = parent.canonicalize()
+            .map_err(|e| format!("cannot resolve parent directory for '{path}': {e}"))?;
+        let root_canonical = repo_root.canonicalize()
+            .map_err(|e| format!("cannot resolve repo root: {e}"))?;
+        if !parent_canonical.starts_with(&root_canonical) {
             return Err(format!("refusing to write outside repository: {path}"));
         }
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).ok();
-        }
-        fs::write(&file_path, &content)
-            .map_err(|e| format!("cannot write '{path}': {e}"))?;
-        apply_file_mode(&file_path, mode)?;
     }
+
+    fs::write(&file_path, &content)
+        .map_err(|e| format!("cannot write '{path}': {e}"))?;
+    apply_file_mode(&file_path, mode)?;
     Ok(())
 }
 

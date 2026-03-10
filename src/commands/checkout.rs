@@ -107,11 +107,7 @@ fn switch_to_commit(
     target_sha: &str,
 ) -> Result<(), String> {
     let index = Index::load(vrit_dir)?;
-    let target_entries = repo::commit_tree_entries(vrit_dir, target_sha)?;
-    let target_map: HashMap<String, (String, u32)> = target_entries
-        .into_iter()
-        .map(|(p, s, m)| (p, (s, m)))
-        .collect();
+    let target_map = repo::commit_tree_entries_map(vrit_dir, target_sha)?;
 
     // Check for dirty tracked files that would be overwritten
     check_dirty_files(repo_root, &index, &target_map)?;
@@ -185,10 +181,7 @@ fn restore_file(
 ) -> Result<(), String> {
     let head_sha = repo::resolve_head(vrit_dir)?
         .ok_or("no commits yet")?;
-    let entries: HashMap<String, (String, u32)> = repo::commit_tree_entries(vrit_dir, &head_sha)?
-        .into_iter()
-        .map(|(p, s, m)| (p, (s, m)))
-        .collect();
+    let entries = repo::commit_tree_entries_map(vrit_dir, &head_sha)?;
 
     let (sha, mode) = entries
         .get(file_path)

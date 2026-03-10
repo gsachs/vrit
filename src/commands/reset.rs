@@ -6,6 +6,8 @@ use crate::repo;
 pub fn execute(commit: Option<&str>) -> Result<(), String> {
     let vrit_dir = repo::find_vrit_dir()?;
 
+    let current_sha = repo::resolve_head(&vrit_dir)?;
+
     let target_sha = match commit {
         Some(sha) => {
             // Verify it's a valid commit
@@ -18,12 +20,9 @@ pub fn execute(commit: Option<&str>) -> Result<(), String> {
         }
         None => {
             // Default to HEAD — just unstage everything
-            repo::resolve_head(&vrit_dir)?
-                .ok_or("no commits yet")?
+            current_sha.clone().ok_or("no commits yet")?
         }
     };
-
-    let current_sha = repo::resolve_head(&vrit_dir)?;
 
     // If target differs from current HEAD, move the branch pointer
     if current_sha.as_deref() != Some(target_sha.as_str()) {

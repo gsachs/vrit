@@ -74,18 +74,19 @@ impl Object {
     /// Compute SHA-1 of the full serialized form (header + body).
     pub fn sha(&self) -> String {
         let data = self.serialize();
+        Self::hash_bytes(&data)
+    }
+
+    fn hash_bytes(data: &[u8]) -> String {
         let mut hasher = Sha1::new();
-        hasher.update(&data);
+        hasher.update(data);
         format!("{:x}", hasher.finalize())
     }
 
     /// Write the object to the object store (zlib-compressed).
     pub fn write_to_store(&self, vrit_dir: &Path) -> Result<String, String> {
         let data = self.serialize();
-
-        let mut hasher = Sha1::new();
-        hasher.update(&data);
-        let sha = format!("{:x}", hasher.finalize());
+        let sha = Self::hash_bytes(&data);
 
         validate_sha(&sha)?;
         let dir = vrit_dir.join("objects").join(&sha[..2]);

@@ -1,5 +1,5 @@
 // Merges a branch into the current branch — fast-forward or three-way
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -116,12 +116,9 @@ fn three_way_merge(
     base_sha: &str,
     branch_name: &str,
 ) -> Result<(), String> {
-    let base_entries: HashMap<String, (String, u32)> = repo::commit_tree_entries(vrit_dir, base_sha)?
-        .into_iter().map(|(p, s, m)| (p, (s, m))).collect();
-    let head_entries: HashMap<String, (String, u32)> = repo::commit_tree_entries(vrit_dir, head_sha)?
-        .into_iter().map(|(p, s, m)| (p, (s, m))).collect();
-    let other_entries: HashMap<String, (String, u32)> = repo::commit_tree_entries(vrit_dir, other_sha)?
-        .into_iter().map(|(p, s, m)| (p, (s, m))).collect();
+    let base_entries = repo::commit_tree_entries_map(vrit_dir, base_sha)?;
+    let head_entries = repo::commit_tree_entries_map(vrit_dir, head_sha)?;
+    let other_entries = repo::commit_tree_entries_map(vrit_dir, other_sha)?;
 
     // Collect all paths
     let mut all_paths: HashSet<&String> = HashSet::new();
