@@ -32,21 +32,21 @@ fn diff_staged(
     let head_entries = head_tree_map(vrit_dir)?;
 
     for entry in &index.entries {
-        let old_content = head_entries
+        let old_bytes = head_entries
             .iter()
             .find(|(p, _)| p == &entry.path)
-            .and_then(|(_, sha)| read_blob(vrit_dir, sha));
+            .and_then(|(_, sha)| read_blob_bytes(vrit_dir, sha));
 
-        let new_content = read_blob(vrit_dir, &entry.sha);
+        let new_bytes = read_blob_bytes(vrit_dir, &entry.sha);
 
-        show_diff(&entry.path, old_content.as_deref(), new_content.as_deref(), colored);
+        show_diff_bytes(&entry.path, old_bytes.as_deref(), new_bytes.as_deref(), colored);
     }
 
     // Files in HEAD but not in index (staged deletions)
     for (path, sha) in &head_entries {
         if index.get(path).is_none() {
-            let old_content = read_blob(vrit_dir, sha);
-            show_diff(path, old_content.as_deref(), None, colored);
+            let old_bytes = read_blob_bytes(vrit_dir, sha);
+            show_diff_bytes(path, old_bytes.as_deref(), None, colored);
         }
     }
 
@@ -63,8 +63,8 @@ fn diff_unstaged(
         let file_path = repo_root.join(&entry.path);
         if !file_path.exists() {
             // Deleted in working tree
-            let old_content = read_blob(vrit_dir, &entry.sha);
-            show_diff(&entry.path, old_content.as_deref(), None, colored);
+            let old_bytes = read_blob_bytes(vrit_dir, &entry.sha);
+            show_diff_bytes(&entry.path, old_bytes.as_deref(), None, colored);
             continue;
         }
 
@@ -72,12 +72,11 @@ fn diff_unstaged(
         let working_blob = Object::Blob(working_content.clone());
 
         if working_blob.sha() != entry.sha {
-            let old_content = read_blob(vrit_dir, &entry.sha);
-            let new_str = String::from_utf8(working_content).ok();
-            show_diff(
+            let old_bytes = read_blob_bytes(vrit_dir, &entry.sha);
+            show_diff_bytes(
                 &entry.path,
-                old_content.as_deref(),
-                new_str.as_deref(),
+                old_bytes.as_deref(),
+                Some(&working_content),
                 colored,
             );
         }
@@ -85,15 +84,18 @@ fn diff_unstaged(
     Ok(())
 }
 
-fn show_diff(path: &str, old: Option<&str>, new: Option<&str>, colored: bool) {
-    let old_text = old.unwrap_or("");
-    let new_text = new.unwrap_or("");
+fn show_diff_bytes(path: &str, old: Option<&[u8]>, new: Option<&[u8]>, colored: bool) {
+    let old_bytes = old.unwrap_or(b"");
+    let new_bytes = new.unwrap_or(b"");
 
-    // Binary check
-    if is_binary(old_text.as_bytes()) || is_binary(new_text.as_bytes()) {
+    // Check binary on raw bytes before any UTF-8 conversion
+    if is_binary(old_bytes) || is_binary(new_bytes) {
         println!("Binary files a/{path} and b/{path} differ");
         return;
     }
+
+    let old_text = std::str::from_utf8(old_bytes).unwrap_or("");
+    let new_text = std::str::from_utf8(new_bytes).unwrap_or("");
 
     let old_lines: Vec<&str> = if old_text.is_empty() {
         Vec::new()
@@ -129,11 +131,11 @@ fn head_tree_map(
     }
 }
 
-fn read_blob(vrit_dir: &std::path::Path, sha: &str) -> Option<String> {
+fn read_blob_bytes(vrit_dir: &std::path::Path, sha: &str) -> Option<Vec<u8>> {
     Object::read_from_store(vrit_dir, sha)
         .ok()
         .and_then(|obj| match obj {
-            Object::Blob(data) => String::from_utf8(data).ok(),
+            Object::Blob(data) => Some(data),
             _ => None,
         })
 }
