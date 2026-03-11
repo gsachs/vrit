@@ -72,17 +72,19 @@ fn add_directory(
     for entry in entries {
         let entry = entry.map_err(|e| format!("directory entry error: {e}"))?;
         let path = entry.path();
-        let rel = normalize_path(&path.to_string_lossy(), repo_root)?;
 
-        if ignore.is_ignored(&rel, path.is_dir()) {
-            continue;
-        }
-
-        // Skip symlinks
+        // Skip symlinks before normalize_path, which follows symlinks via canonicalize
+        // and would error "outside the repository" for symlinks pointing outside
         if path.symlink_metadata()
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false)
         {
+            continue;
+        }
+
+        let rel = normalize_path(&path.to_string_lossy(), repo_root)?;
+
+        if ignore.is_ignored(&rel, path.is_dir()) {
             continue;
         }
 

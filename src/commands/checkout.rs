@@ -29,6 +29,11 @@ pub fn execute(target: &str, file: Option<&str>) -> Result<(), String> {
         return restore_file(&vrit_dir, &repo_root, file_path);
     }
 
+    // Refuse if a merge is in progress
+    if vrit_dir.join("MERGE_HEAD").exists() {
+        return Err("cannot checkout during a merge — commit or abort first".into());
+    }
+
     // Determine if target is a branch or a commit SHA
     let branch_ref = vrit_dir.join("refs/heads").join(target);
     if branch_ref.exists() {

@@ -53,6 +53,16 @@ pub fn execute(message: &str) -> Result<(), String> {
             .map_err(|e| format!("cannot read MERGE_HEAD: {e}"))?
             .trim()
             .to_string();
+        // Validate the merge parent is a real commit before creating a merge commit
+        if merge_sha.len() != 40 || !merge_sha.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("corrupt MERGE_HEAD: invalid SHA '{merge_sha}'"));
+        }
+        let merge_obj = Object::read_from_store(&vrit_dir, &merge_sha)
+            .map_err(|_| format!("corrupt MERGE_HEAD: object '{merge_sha}' not found"))?;
+        match merge_obj {
+            Object::Commit(_) => {}
+            _ => return Err(format!("corrupt MERGE_HEAD: '{merge_sha}' is not a commit")),
+        }
         all_parents.push(merge_sha);
     }
 

@@ -22,6 +22,11 @@ pub fn execute(branch: Option<&str>, abort: bool) -> Result<(), String> {
 
     let branch = branch.ok_or("must specify a branch to merge")?;
 
+    // Refuse if a merge is already in progress
+    if vrit_dir.join("MERGE_HEAD").exists() {
+        return Err("merge already in progress — commit or abort before starting a new merge".into());
+    }
+
     // Refuse if dirty working tree
     check_clean_working_tree(&vrit_dir, &repo_root)?;
 
