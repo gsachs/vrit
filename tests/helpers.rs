@@ -99,6 +99,37 @@ impl TestRepo {
     pub fn read_head(&self) -> String {
         self.read_file(".vrit/HEAD").trim().to_string()
     }
+
+    /// Write arbitrary bytes to a path relative to repo root (for gray-box corruption tests)
+    pub fn write_raw(&self, path: &str, bytes: &[u8]) {
+        let file_path = self.dir.join(path);
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent).expect("failed to create parent dirs");
+        }
+        std::fs::write(&file_path, bytes).expect("failed to write raw bytes");
+    }
+
+    /// Read raw bytes from a path relative to repo root
+    pub fn read_raw(&self, path: &str) -> Vec<u8> {
+        std::fs::read(self.dir.join(path)).expect("failed to read raw bytes")
+    }
+
+    /// Assert command fails without a panic backtrace in output
+    pub fn run_err_no_panic(&self, args: &[&str]) -> String {
+        let output = self.run(args);
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let combined = format!("{stderr}{stdout}");
+        assert!(
+            !output.status.success(),
+            "vrit {args:?} should have failed but succeeded.\nstdout: {stdout}"
+        );
+        assert!(
+            !combined.contains("panicked at"),
+            "vrit {args:?} panicked instead of returning an error:\n{combined}"
+        );
+        combined
+    }
 }
 
 impl Drop for TestRepo {
